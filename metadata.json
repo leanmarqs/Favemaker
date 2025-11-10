@@ -1,0 +1,5 @@
+{
+  "name": "AI Bookmark Manager",
+  "description": "An intelligent bookmark manager that allows users to save, organize, and discover new websites. Users can manually add favorites into customizable collections or use the power of AI to generate collections based on topics.",
+  "requestFramePermissions": []
+}
