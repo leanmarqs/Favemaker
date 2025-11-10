@@ -84,6 +84,7 @@ const EditCollectionModal: React.FC<EditCollectionModalProps> = ({
     const handleDeleteBookmarkSubmit = (bookmarkId: string) => {
         if (!selectedCollectionId) return;
         onDeleteBookmark(bookmarkId, selectedCollectionId);
+        setBookmarkToEdit(null);
     };
 
 
