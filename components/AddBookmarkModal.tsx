@@ -8,45 +8,49 @@ interface AddBookmarkModalProps {
     onClose: () => void;
     onSave: (bookmarkInfo: Omit<Bookmark, 'id' | 'createdAt' | 'lastClickedAt' | 'clickCount' | 'relevanceScore'>, collectionId: string) => void;
     collections: Collection[];
-    url: string;
+    bookmarkData: {
+        url: string;
+        name: string;
+        description: string;
+        favicon: string;
+    } | null;
 }
 
 const colors = ["#ef4444", "#f97316", "#eab308", "#84cc16", "#22c55e", "#14b8a6", "#06b6d4", "#3b82f6", "#8b5cf6", "#d946ef"];
 
-
-const AddBookmarkModal: React.FC<AddBookmarkModalProps> = ({ isOpen, onClose, onSave, collections, url }) => {
+const AddBookmarkModal: React.FC<AddBookmarkModalProps> = ({ isOpen, onClose, onSave, collections, bookmarkData }) => {
     const [name, setName] = useState('');
+    const [description, setDescription] = useState('');
     const [favicon, setFavicon] = useState('');
     const [selectedCollectionId, setSelectedCollectionId] = useState<string>('');
     const [color, setColor] = useState(colors[5]);
     const [isPublic, setIsPublic] = useState(true);
 
     useEffect(() => {
-        if (isOpen) {
-            try {
-                const urlObject = new URL(url);
-                const fetchedName = urlObject.hostname.replace('www.', '').split('.')[0];
-                const capitalizedName = fetchedName.charAt(0).toUpperCase() + fetchedName.slice(1);
-                setName(capitalizedName);
-                setFavicon(`https://www.google.com/s2/favicons?domain=${urlObject.hostname}&sz=64`);
-            } catch (error) {
-                setName(url);
-                setFavicon('');
-            }
-
-            if (collections.length > 0 && !selectedCollectionId) {
-                setSelectedCollectionId(collections[0].id);
+        if (isOpen && bookmarkData) {
+            setName(bookmarkData.name);
+            setDescription(bookmarkData.description);
+            setFavicon(bookmarkData.favicon);
+            if (collections.length > 0) {
+                 setSelectedCollectionId(prevId => {
+                    const collectionExists = collections.some(c => c.id === prevId);
+                    return (prevId && collectionExists) ? prevId : collections[0].id;
+                });
+            } else {
+                setSelectedCollectionId('');
             }
         }
-    }, [isOpen, url, collections, selectedCollectionId]);
+    }, [isOpen, bookmarkData, collections]);
 
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!name || !selectedCollectionId || !url) return;
-        onSave({ name, url, favicon, isPublic, color }, selectedCollectionId);
+        if (!name || !selectedCollectionId || !bookmarkData?.url) return;
+        onSave({ name, url: bookmarkData.url, description, favicon, isPublic, color }, selectedCollectionId);
         onClose();
     };
+
+    if (!bookmarkData) return null;
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="Add New Favorite">
@@ -67,8 +71,20 @@ const AddBookmarkModal: React.FC<AddBookmarkModalProps> = ({ isOpen, onClose, on
                             className="w-full bg-transparent text-lg font-semibold text-white focus:outline-none"
                             required
                         />
-                        <p className="text-sm text-gray-400 truncate">{url}</p>
+                        <p className="text-sm text-gray-400 truncate">{bookmarkData.url}</p>
                     </div>
+                </div>
+
+                <div>
+                    <label htmlFor="description" className="block text-sm font-medium text-gray-300">Description</label>
+                    <textarea
+                        id="description"
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                        rows={3}
+                        className="mt-1 block w-full bg-slate-700 border border-slate-600 rounded-md shadow-sm py-2 px-3 text-white focus:outline-none focus:ring-fuchsia-500 focus:border-fuchsia-500"
+                        placeholder="A short description of the website (optional)"
+                    />
                 </div>
 
                 <div>
@@ -102,15 +118,23 @@ const AddBookmarkModal: React.FC<AddBookmarkModalProps> = ({ isOpen, onClose, on
                     </div>
                 </div>
 
-                <div className="flex items-center">
-                    <input
-                        id="isPublicBookmark"
-                        type="checkbox"
-                        checked={isPublic}
-                        onChange={(e) => setIsPublic(e.target.checked)}
-                        className="h-4 w-4 rounded border-gray-300 text-fuchsia-600 focus:ring-fuchsia-500"
-                    />
-                    <label htmlFor="isPublicBookmark" className="ml-2 block text-sm text-gray-300">Public Bookmark</label>
+                <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-300" id="public-bookmark-label">
+                        Public Bookmark
+                    </span>
+                    <button
+                        type="button"
+                        className={`${isPublic ? 'bg-fuchsia-600' : 'bg-slate-600'} relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-fuchsia-500 focus:ring-offset-2 focus:ring-offset-slate-800`}
+                        role="switch"
+                        aria-checked={isPublic}
+                        onClick={() => setIsPublic(!isPublic)}
+                        aria-labelledby="public-bookmark-label"
+                    >
+                        <span
+                            aria-hidden="true"
+                            className={`${isPublic ? 'translate-x-5' : 'translate-x-0'} pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`}
+                        />
+                    </button>
                 </div>
                 <div className="flex justify-end pt-4">
                     <button type="submit" className="bg-fuchsia-600 hover:bg-fuchsia-700 text-white font-bold py-2 px-4 rounded-lg transition-colors">

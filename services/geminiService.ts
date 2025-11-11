@@ -46,12 +46,19 @@ export const generateCollectionFromQuery = async (query: string): Promise<AIGene
                 required: ["name", "url", "description"]
               }
             }
-          }
+          },
+          required: ["sites"]
         },
       },
     });
 
-    const jsonString = response.text.trim();
+    let jsonString = response.text.trim();
+    if (jsonString.startsWith('```json')) {
+        jsonString = jsonString.substring(7, jsonString.length - 3).trim();
+    } else if (jsonString.startsWith('```')) {
+        jsonString = jsonString.substring(3, jsonString.length - 3).trim();
+    }
+    
     const parsed = JSON.parse(jsonString);
     return parsed.sites || [];
   } catch (error) {

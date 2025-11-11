@@ -1,23 +1,62 @@
-import React, { useState, useMemo, useCallback } from 'react';
+
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { Bookmark, Collection, SortCriteria, SortOrder, AIGeneratedSite } from './types';
 import { generateCollectionFromQuery } from './services/geminiService';
-import { BookmarkIcon, StarIcon, PlusIcon, PencilIcon, SortIcon, FilterIcon, GlobeIcon } from './components/Icons';
+import { fetchUrlMetadata } from './services/metadataService';
+import { BookmarkIcon, StarIcon, PlusIcon, SortIcon, FilterIcon, GlobeIcon, GearIcon } from './components/Icons';
 import AddCollectionModal from './components/AddCollectionModal';
 import AddBookmarkModal from './components/AddBookmarkModal';
 import EditCollectionModal from './components/EditCollectionModal';
 import Spinner from './components/Spinner';
 
 const App: React.FC = () => {
-    const [collections, setCollections] = useState<Collection[]>([]);
+    const [collections, setCollections] = useState<Collection[]>(() => {
+        try {
+            const savedCollections = localStorage.getItem('bookmarkCollections');
+            if (savedCollections) {
+                // Dates are stored as strings in JSON, so we need to convert them back
+                const parsed = JSON.parse(savedCollections);
+                return parsed.map((collection: Collection) => ({
+                    ...collection,
+                    createdAt: new Date(collection.createdAt),
+                    bookmarks: collection.bookmarks.map((bookmark: Bookmark) => ({
+                        ...bookmark,
+                        createdAt: new Date(bookmark.createdAt),
+                        lastClickedAt: new Date(bookmark.lastClickedAt),
+                    })),
+                }));
+            }
+        } catch (error) {
+            console.error("Failed to load collections from localStorage", error);
+        }
+        return [];
+    });
+    
+    useEffect(() => {
+        try {
+            localStorage.setItem('bookmarkCollections', JSON.stringify(collections));
+        } catch (error) {
+            console.error("Failed to save collections to localStorage", error);
+        }
+    }, [collections]);
+
     const [inputValue, setInputValue] = useState('');
     const [isAddCollectionModalOpen, setIsAddCollectionModalOpen] = useState(false);
     const [isAddBookmarkModalOpen, setIsAddBookmarkModalOpen] = useState(false);
     const [isEditCollectionModalOpen, setIsEditCollectionModalOpen] = useState(false);
+    const [collectionToEditId, setCollectionToEditId] = useState<string | null>(null);
     const [isAiLoading, setIsAiLoading] = useState(false);
+    const [isFetchingMetadata, setIsFetchingMetadata] = useState(false);
+    const [bookmarkDataForModal, setBookmarkDataForModal] = useState<{url: string; name: string; description: string; favicon: string;} | null>(null);
     const [aiError, setAiError] = useState<string | null>(null);
     const [sortCriteria, setSortCriteria] = useState<SortCriteria>(SortCriteria.Date);
     const [sortOrder, setSortOrder] = useState<SortOrder>(SortOrder.Desc);
     const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
+
+    const collectionToEdit = useMemo(
+        () => collectionToEditId ? collections.find(c => c.id === collectionToEditId) ?? null : null,
+        [collections, collectionToEditId]
+    );
 
     const handleAddCollection = (collectionData: Omit<Collection, 'id' | 'createdAt' | 'bookmarks'>) => {
         const newCollection: Collection = {
@@ -77,11 +116,35 @@ const App: React.FC = () => {
         }));
     };
 
-    const handleUrlSubmit = () => {
-        if (isValidUrl(inputValue)) {
-            setIsAddBookmarkModalOpen(true);
-        } else {
+    const handleUrlSubmit = async () => {
+        if (!isValidUrl(inputValue)) {
             alert("Please enter a valid URL (e.g., https://example.com)");
+            return;
+        }
+        setIsFetchingMetadata(true);
+        try {
+            const metadata = await fetchUrlMetadata(inputValue);
+            setBookmarkDataForModal({
+                url: inputValue,
+                name: metadata.title,
+                description: metadata.description,
+                favicon: metadata.favicon
+            });
+            setIsAddBookmarkModalOpen(true);
+        } catch (error) {
+            console.error("Failed to fetch metadata, opening modal with basic info.", error);
+            const urlObject = new URL(inputValue);
+            const hostname = urlObject.hostname.replace('www.', '');
+            const name = hostname.split('.')[0];
+            setBookmarkDataForModal({
+                url: inputValue,
+                name: name.charAt(0).toUpperCase() + name.slice(1),
+                description: '',
+                favicon: `https://www.google.com/s2/favicons?domain=${urlObject.hostname}&sz=64`
+            });
+            setIsAddBookmarkModalOpen(true);
+        } finally {
+            setIsFetchingMetadata(false);
         }
     };
     
@@ -104,6 +167,7 @@ const App: React.FC = () => {
                 id: crypto.randomUUID(),
                 url: site.url,
                 name: site.name,
+                description: site.description,
                 favicon: `https://www.google.com/s2/favicons?domain=${new URL(site.url).hostname}&sz=64`,
                 isPublic: true,
                 color: '#8b5cf6', // Default AI color
@@ -133,8 +197,8 @@ const App: React.FC = () => {
     
     const calculateRelevance = (bookmark: Bookmark): number => {
         const now = new Date().getTime();
-        const ageInHours = (now - bookmark.createdAt.getTime()) / (1000 * 3600);
-        const lastClickedHoursAgo = (now - bookmark.lastClickedAt.getTime()) / (1000 * 3600);
+        const ageInHours = (now - new Date(bookmark.createdAt).getTime()) / (1000 * 3600);
+        const lastClickedHoursAgo = (now - new Date(bookmark.lastClickedAt).getTime()) / (1000 * 3600);
         
         const score = (bookmark.clickCount * 5) - (ageInHours * 0.1) - (lastClickedHoursAgo * 0.05);
         return score;
@@ -163,7 +227,7 @@ const App: React.FC = () => {
                     comparison = a.bookmarks.length - b.bookmarks.length;
                     break;
                 case SortCriteria.Date:
-                    comparison = a.createdAt.getTime() - b.createdAt.getTime();
+                    comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
                     break;
                 default:
                     return 0; // Relevance is handled on bookmarks, not collections
@@ -179,6 +243,11 @@ const App: React.FC = () => {
     const handleFilterChange = (criteria: SortCriteria) => {
         setSortCriteria(criteria);
         setIsFilterMenuOpen(false);
+    };
+
+    const handleOpenEditCollectionModal = (collection: Collection) => {
+        setCollectionToEditId(collection.id);
+        setIsEditCollectionModalOpen(true);
     };
 
     return (
@@ -202,10 +271,10 @@ const App: React.FC = () => {
                                 placeholder="Paste a URL to favorite, or type a topic for AI..."
                                 className="flex-grow bg-transparent focus:outline-none px-4 text-white placeholder-slate-500"
                             />
-                            <button onClick={handleUrlSubmit} className="flex-shrink-0 w-10 h-10 bg-cyan-500 hover:bg-cyan-600 rounded-full flex items-center justify-center transition-transform transform hover:scale-110">
-                                <BookmarkIcon className="w-5 h-5" />
+                            <button onClick={handleUrlSubmit} disabled={isFetchingMetadata || isAiLoading} className="flex-shrink-0 w-10 h-10 bg-cyan-500 hover:bg-cyan-600 rounded-full flex items-center justify-center transition-transform transform hover:scale-110 disabled:opacity-50 disabled:cursor-not-allowed">
+                                {isFetchingMetadata ? <Spinner /> : <BookmarkIcon className="w-5 h-5" />}
                             </button>
-                            <button onClick={handleAiSubmit} disabled={isAiLoading} className="flex-shrink-0 w-10 h-10 bg-fuchsia-500 hover:bg-fuchsia-600 rounded-full flex items-center justify-center transition-transform transform hover:scale-110 disabled:opacity-50 disabled:cursor-not-allowed">
+                            <button onClick={handleAiSubmit} disabled={isAiLoading || isFetchingMetadata} className="flex-shrink-0 w-10 h-10 bg-fuchsia-500 hover:bg-fuchsia-600 rounded-full flex items-center justify-center transition-transform transform hover:scale-110 disabled:opacity-50 disabled:cursor-not-allowed">
                                 {isAiLoading ? <Spinner /> : <StarIcon className="w-5 h-5" />}
                             </button>
                         </div>
@@ -215,9 +284,6 @@ const App: React.FC = () => {
                     <div className="flex items-center justify-center gap-4 py-6">
                         <button onClick={() => setIsAddCollectionModalOpen(true)} className="w-12 h-12 bg-slate-700 hover:bg-slate-600 rounded-full flex items-center justify-center transition-colors" title="New Collection">
                             <PlusIcon className="w-6 h-6"/>
-                        </button>
-                        <button onClick={() => setIsEditCollectionModalOpen(true)} className="w-12 h-12 bg-slate-700 hover:bg-slate-600 rounded-full flex items-center justify-center transition-colors" title="Manage Collections">
-                            <PencilIcon className="w-6 h-6"/>
                         </button>
                         <button onClick={handleSortToggle} className="w-12 h-12 bg-slate-700 hover:bg-slate-600 rounded-full flex items-center justify-center transition-colors" title={`Sort ${sortOrder === 'asc' ? 'Descending' : 'Ascending'}`}>
                             <SortIcon className="w-6 h-6"/>
@@ -251,9 +317,18 @@ const App: React.FC = () => {
                         <div className="space-y-8">
                            {sortedCollections.map(collection => (
                                 <div key={collection.id} className="bg-slate-800/50 border border-slate-700 rounded-2xl overflow-hidden shadow-lg">
-                                    <div className="p-4 border-b-4" style={{borderColor: collection.color}}>
-                                        <h2 className="text-xl font-bold">{collection.name}</h2>
-                                        <p className="text-sm text-slate-400">{collection.description}</p>
+                                    <div className="p-4 border-b-4 flex justify-between items-start" style={{borderColor: collection.color}}>
+                                        <div>
+                                            <h2 className="text-xl font-bold">{collection.name}</h2>
+                                            <p className="text-sm text-slate-400">{collection.description}</p>
+                                        </div>
+                                        <button 
+                                            onClick={() => handleOpenEditCollectionModal(collection)} 
+                                            className="flex-shrink-0 p-2 -mr-2 -mt-2 rounded-full text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+                                            aria-label={`Settings for ${collection.name}`}
+                                        >
+                                            <GearIcon className="w-5 h-5"/>
+                                        </button>
                                     </div>
                                     <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                                         {collection.bookmarks.map(bm => (
@@ -288,16 +363,22 @@ const App: React.FC = () => {
 
             <AddBookmarkModal 
                 isOpen={isAddBookmarkModalOpen}
-                onClose={() => setIsAddBookmarkModalOpen(false)}
+                onClose={() => {
+                    setIsAddBookmarkModalOpen(false);
+                    setBookmarkDataForModal(null);
+                }}
                 onSave={handleAddBookmark}
                 collections={collections}
-                url={inputValue}
+                bookmarkData={bookmarkDataForModal}
             />
 
             <EditCollectionModal
                 isOpen={isEditCollectionModalOpen}
-                onClose={() => setIsEditCollectionModalOpen(false)}
-                collections={collections}
+                onClose={() => {
+                    setIsEditCollectionModalOpen(false);
+                    setCollectionToEditId(null);
+                }}
+                collection={collectionToEdit}
                 onUpdateCollection={handleUpdateCollection}
                 onDeleteCollection={handleDeleteCollection}
                 onUpdateBookmark={handleUpdateBookmark}
