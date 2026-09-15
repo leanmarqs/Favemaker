@@ -1,0 +1,38 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+}
+model Owner {
+  id String @id @default(uuid())
+  tokenHash String @unique
+  collections Collection[]
+}
+model Collection {
+  id String @id @default(uuid())
+  ownerId String
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name String @db.VarChar(120)
+  description String @default("")
+  color String @default("#b9ee78")
+  isPublic Boolean @default(false)
+  shape String @default("circle")
+  createdAt DateTime @default(now())
+  bookmarks Bookmark[]
+  @@index([ownerId])
+}
+model Bookmark {
+  id String @id @default(uuid())
+  collectionId String
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  name String @db.VarChar(120)
+  url String
+  description String @default("")
+  favicon String @default("")
+  color String @default("#b9ee78")
+  isPublic Boolean @default(false)
+  createdAt DateTime @default(now())
+  @@index([collectionId])
+}
