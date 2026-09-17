@@ -13,6 +13,8 @@ import {
   Heart,
   Link2,
   Lock,
+  LockOpen,
+  LogOut,
   Moon,
   Pencil,
   Plus,
@@ -21,12 +23,32 @@ import {
   SlidersHorizontal,
   Sun,
   Trash2,
+  User,
   X,
   Upload,
   Copy,
 } from "lucide-react";
-import type { Bookmark, Collection } from "./types";
+import type { Account, Bookmark, Collection } from "./types";
+import PasswordField from "./PasswordField";
 import "./styles.css";
+
+type GoogleTokenClient = { requestAccessToken: () => void };
+type GoogleIdentity = {
+  accounts: {
+    oauth2: {
+      initTokenClient: (options: {
+        client_id: string;
+        scope: string;
+        callback: (response: { access_token?: string }) => void;
+      }) => GoogleTokenClient;
+    };
+  };
+};
+declare global {
+  interface Window {
+    google?: GoogleIdentity;
+  }
+}
 
 async function api(path: string, method = "GET", body?: unknown) {
   const res = await fetch(`/api${path}`, {
@@ -77,17 +99,20 @@ function Privacy({
   return (
     <div className="privacy">
       <div>
-        <strong>{value ? "Público" : "Privado"}</strong>
+        <strong>Visibilidade</strong>
       </div>
       <button
         type="button"
         role="switch"
         aria-label="Visibilidade pública"
         aria-checked={value}
+        title={value ? "Público" : "Privado"}
         className={`switch ${value ? "on" : ""}`}
         onClick={() => onChange(!value)}
       >
-        <span />
+        <span aria-hidden="true">
+          {value ? <LockOpen size={12} /> : <Lock size={12} />}
+        </span>
       </button>
     </div>
   );
@@ -100,11 +125,18 @@ function Sphere({
   shape?: string;
 }) {
   const [failed, setFailed] = useState(false);
+  const borderRadius =
+    shape === "square" ? 0 : shape === "rounded" ? "28%" : "50%";
   useEffect(() => setFailed(false), [bookmark.favicon]);
   return (
     <span
       className={`sphere sphere-${shape}`}
-      style={{ "--orb": bookmark.color } as React.CSSProperties}
+      style={
+        {
+          "--orb": bookmark.color,
+          borderRadius,
+        } as React.CSSProperties
+      }
     >
       {bookmark.favicon && !failed ? (
         <img src={bookmark.favicon} alt="" onError={() => setFailed(true)} />
@@ -325,7 +357,7 @@ function CollectionRow({
     </article>
   );
 }
-export default function App() {
+export default function App({ account, onLogout, googleClientId }: { account?: Account; onLogout?: () => void; googleClientId?: string } = {}) {
   const sharedId = new URLSearchParams(location.search).get("perfil");
   const readOnly = Boolean(sharedId);
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -357,6 +389,21 @@ export default function App() {
   const [activeFilters, setActiveFilters] = useState<FilterKey[]>([]);
   const [isCollectionCreatorOpen, setIsCollectionCreatorOpen] = useState(false);
   const [collectionDraft, setCollectionDraft] = useState<Draft>({ ...blank });
+  const [profile, setProfile] = useState<Account | undefined>(account);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
+  const accountMenu = useRef<HTMLDivElement>(null);
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileError, setProfileError] = useState("");
+  const [profileNotice, setProfileNotice] = useState("");
+  const [nameDraft, setNameDraft] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [confirmDisconnectGoogle, setConfirmDisconnectGoogle] = useState(false);
+  const [disconnectGooglePassword, setDisconnectGooglePassword] = useState("");
+  const googleTokenClient = useRef<GoogleTokenClient | null>(null);
   const [collectionEditorReturn, setCollectionEditorReturn] = useState<Draft | null>(null);
   const [modalPosition, setModalPosition] = useState({ x: 0, y: 0 });
   const [collectionModalPosition, setCollectionModalPosition] = useState({ x: 0, y: 0 });
@@ -466,6 +513,32 @@ export default function App() {
     else if (!isCollectionCreatorOpen && collectionDialog.current?.open)
       collectionDialog.current.close();
   }, [isCollectionCreatorOpen]);
+  useEffect(() => {
+    if (isProfileOpen) {
+      setNameDraft(profile?.displayName || profile?.name || "");
+      setCurrentPassword("");
+      setNewPassword("");
+      setDeletePassword("");
+      setConfirmDeleteAccount(false);
+      setProfileError("");
+      setProfileNotice("");
+    }
+  }, [isProfileOpen]);
+  useEffect(() => {
+    if (!isAccountMenuOpen) return;
+    function handlePointerDown(e: MouseEvent) {
+      if (!accountMenu.current?.contains(e.target as Node)) setIsAccountMenuOpen(false);
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setIsAccountMenuOpen(false);
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isAccountMenuOpen]);
   useEffect(() => {
     if (!notice) return;
     const timeout = setTimeout(() => setNotice(""), 4500);
@@ -711,6 +784,148 @@ export default function App() {
       setNotice("Não foi possível copiar o link.");
     }
   }
+  async function saveAvatar(avatar: string) {
+    setProfileBusy(true);
+    setProfileError("");
+    try {
+      const data = await api("/auth/avatar", "POST", { avatar });
+      setProfile(data.user);
+    } catch (e) {
+      setProfileError((e as Error).message);
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+  async function uploadAvatar(file?: File) {
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      setProfileError("Escolha uma imagem de até 2 MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => void saveAvatar(String(reader.result));
+    reader.onerror = () => setProfileError("Não foi possível ler o arquivo.");
+    reader.readAsDataURL(file);
+  }
+  async function saveName(e: React.FormEvent) {
+    e.preventDefault();
+    setProfileBusy(true);
+    setProfileError("");
+    setProfileNotice("");
+    try {
+      const data = await api("/auth/me", "PATCH", { displayName: nameDraft });
+      setProfile(data.user);
+      setProfileNotice("Nome atualizado.");
+    } catch (e) {
+      setProfileError((e as Error).message);
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+  async function changePassword(e: React.FormEvent) {
+    e.preventDefault();
+    setProfileBusy(true);
+    setProfileError("");
+    setProfileNotice("");
+    try {
+      await api("/auth/change-password", "POST", { currentPassword, newPassword });
+      setCurrentPassword("");
+      setNewPassword("");
+      setProfileNotice(profile?.hasPassword ? "Senha alterada." : "Senha definida.");
+      setProfile((previous) => (previous ? { ...previous, hasPassword: true } : previous));
+    } catch (e) {
+      setProfileError((e as Error).message);
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+  async function logoutOthers() {
+    setProfileBusy(true);
+    setProfileError("");
+    setProfileNotice("");
+    try {
+      await api("/auth/logout-others", "POST", {});
+      setProfileNotice("Você saiu de todos os outros dispositivos.");
+    } catch (e) {
+      setProfileError((e as Error).message);
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+  async function deleteAccount() {
+    setProfileBusy(true);
+    setProfileError("");
+    try {
+      await api("/auth/me", "DELETE", profile?.hasPassword ? { password: deletePassword } : {});
+      location.assign("/");
+    } catch (e) {
+      setProfileError((e as Error).message);
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+  async function disconnectGoogle() {
+    setProfileBusy(true);
+    setProfileError("");
+    setProfileNotice("");
+    try {
+      const data = await api("/auth/google/disconnect", "POST", { password: disconnectGooglePassword });
+      setDisconnectGooglePassword("");
+      setConfirmDisconnectGoogle(false);
+      setProfileNotice("Conta Google desconectada.");
+      setProfile((data as { user: Account }).user);
+    } catch (e) {
+      setProfileError((e as Error).message);
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+  useEffect(() => {
+    if (!googleClientId || profile?.googleLinked) return;
+    let active = true;
+    const init = () => {
+      if (!active || !window.google) return;
+      googleTokenClient.current = window.google.accounts.oauth2.initTokenClient({
+        client_id: googleClientId,
+        scope: "openid email profile",
+        callback: async ({ access_token }) => {
+          if (!access_token) {
+            setProfileError("Não foi possível conectar o Google. Tente novamente.");
+            return;
+          }
+          setProfileBusy(true);
+          setProfileError("");
+          setProfileNotice("");
+          try {
+            const data = await api("/auth/google/connect", "POST", { accessToken: access_token });
+            setProfileNotice("Conta Google conectada.");
+            setProfile((data as { user: Account }).user);
+          } catch (e) {
+            setProfileError((e as Error).message);
+          } finally {
+            setProfileBusy(false);
+          }
+        },
+      });
+    };
+    let script = document.querySelector<HTMLScriptElement>("script[data-google-login]");
+    if (!script) {
+      script = document.createElement("script");
+      script.src = "https://accounts.google.com/gsi/client";
+      script.async = true;
+      script.dataset.googleLogin = "true";
+      document.head.appendChild(script);
+    }
+    script.addEventListener("load", init);
+    init();
+    return () => {
+      active = false;
+      script?.removeEventListener("load", init);
+    };
+  }, [googleClientId, profile?.googleLinked]);
+  function connectGoogle() {
+    googleTokenClient.current?.requestAccessToken();
+  }
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -719,19 +934,324 @@ export default function App() {
           pinicon<span className="brand-period">.</span>
         </a>
         <div className="header-actions">
-          <button
-            className="theme-button"
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            aria-label={`Ativar tema ${theme === "dark" ? "claro" : "escuro"}`}
-          >
-            {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-          <span className="avatar" aria-hidden="true">
-            P
-          </span>
+          {profile && (
+            <div className="account-menu" ref={accountMenu}>
+              <button
+                type="button"
+                className="avatar"
+                title={profile.name}
+                aria-label="Abrir menu da conta"
+                aria-expanded={isAccountMenuOpen}
+                onClick={() => setIsAccountMenuOpen((open) => !open)}
+              >
+                {profile.avatar ? (
+                  <img src={profile.avatar} alt="" />
+                ) : (
+                  profile.name?.slice(0, 1).toUpperCase() || "P"
+                )}
+              </button>
+              {isAccountMenuOpen && (
+                <div className="account-menu-panel" role="menu">
+                  <div className="account-menu-header">
+                    <span className="account-menu-name">{profile.displayName || profile.name}</span>
+                    <span className="account-menu-email">{profile.email}</span>
+                  </div>
+                  <div className="account-menu-items">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setIsAccountMenuOpen(false);
+                        setIsProfileOpen(true);
+                      }}
+                    >
+                      <User size={16} />
+                      Conta
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                    >
+                      {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+                      Tema
+                    </button>
+                    {onLogout && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setIsAccountMenuOpen(false);
+                          onLogout();
+                        }}
+                      >
+                        <LogOut size={16} />
+                        Sair
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </header>
       <main>
+        {isProfileOpen ? (
+          <section className="account-page" aria-labelledby="profile-title">
+            <div className="modal-content">
+              <div className="modal-heading account-page-heading">
+                <button
+                  className="icon-button"
+                  type="button"
+                  disabled={profileBusy}
+                  aria-label="Voltar"
+                  onClick={() => setIsProfileOpen(false)}
+                >
+                  <ChevronLeft size={20} />
+                </button>
+                <h2 id="profile-title">Perfil</h2>
+              </div>
+              <div className="profile-section">
+                <h3>Foto de perfil</h3>
+                <div className="profile-avatar-row">
+                  <span className="profile-avatar-preview">
+                    {profile?.avatar ? (
+                      <img src={profile.avatar} alt="" />
+                    ) : (
+                      profile?.name?.slice(0, 1).toUpperCase() || "P"
+                    )}
+                  </span>
+                  <div className="profile-avatar-actions">
+                    <label className="upload">
+                      <Upload size={15} />
+                      Enviar foto
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/gif"
+                        disabled={profileBusy}
+                        onChange={(e) => void uploadAvatar(e.target.files?.[0])}
+                      />
+                    </label>
+                    {profile?.avatar && (
+                      <button
+                        type="button"
+                        className="danger-text"
+                        disabled={profileBusy}
+                        onClick={() => void saveAvatar("")}
+                      >
+                        Remover foto
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <p className="help">PNG, JPG, WebP ou GIF. Até 2 MB.</p>
+              </div>
+              <form className="profile-section" onSubmit={saveName}>
+                <h3>Nome</h3>
+                <label>
+                  <input
+                    value={nameDraft}
+                    onChange={(e) => setNameDraft(e.target.value)}
+                    required
+                    maxLength={60}
+                    disabled={profileBusy}
+                  />
+                </label>
+                <button className="primary" type="submit" disabled={profileBusy}>
+                  {profileBusy ? "Salvando…" : "Salvar nome"}
+                </button>
+              </form>
+              <div className="profile-section">
+                <h3>Conta</h3>
+                <div className="profile-info">
+                  {profile?.email && (
+                    <p>
+                      E-mail: <strong>{profile.email}</strong>
+                    </p>
+                  )}
+                  {profile?.username && (
+                    <p>
+                      Usuário: <strong>{profile.username}</strong>
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="profile-section">
+                <h3>Métodos de login</h3>
+                <div className="profile-info">
+                  <p>
+                    Google: <strong>{profile?.googleLinked ? "Conectado" : "Não conectado"}</strong>
+                  </p>
+                </div>
+                {profile?.googleLinked ? (
+                  confirmDisconnectGoogle ? (
+                    <div className="delete-confirm">
+                      {profile?.hasPassword ? (
+                        <label>
+                          Confirme sua senha
+                          <input
+                            type="password"
+                            value={disconnectGooglePassword}
+                            onChange={(e) => setDisconnectGooglePassword(e.target.value)}
+                            autoComplete="current-password"
+                          />
+                        </label>
+                      ) : (
+                        <p className="help">
+                          Defina uma senha antes de desconectar o Google, para não perder o
+                          acesso à conta.
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        disabled={profileBusy || !profile?.hasPassword}
+                        className="danger"
+                        onClick={disconnectGoogle}
+                      >
+                        Confirmar desconexão
+                      </button>
+                      <button
+                        type="button"
+                        disabled={profileBusy}
+                        className="secondary"
+                        onClick={() => {
+                          setConfirmDisconnectGoogle(false);
+                          setDisconnectGooglePassword("");
+                        }}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="danger-text"
+                      disabled={profileBusy}
+                      onClick={() => setConfirmDisconnectGoogle(true)}
+                    >
+                      Desconectar Google
+                    </button>
+                  )
+                ) : (
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={profileBusy || !googleClientId}
+                    onClick={connectGoogle}
+                  >
+                    Conectar Google
+                  </button>
+                )}
+              </div>
+              <form className="profile-section" onSubmit={changePassword}>
+                <h3>{profile?.hasPassword ? "Trocar senha" : "Definir senha"}</h3>
+                {!profile?.hasPassword && (
+                  <p className="help">
+                    Você entra com o Google. Defina uma senha para também poder
+                    entrar com usuário e senha.
+                  </p>
+                )}
+                {profile?.hasPassword && (
+                  <label>
+                    Senha atual
+                    <PasswordField
+                      value={currentPassword}
+                      onChange={setCurrentPassword}
+                      placeholder="Senha atual"
+                      autoComplete="current-password"
+                    />
+                  </label>
+                )}
+                <label>
+                  {profile?.hasPassword ? "Nova senha" : "Senha"}
+                  <PasswordField
+                    value={newPassword}
+                    onChange={setNewPassword}
+                    placeholder="Nova senha"
+                    autoComplete="new-password"
+                    minLength={8}
+                  />
+                </label>
+                <p className="help">Use de 8 a 128 caracteres.</p>
+                <button className="primary" type="submit" disabled={profileBusy}>
+                  {profileBusy
+                    ? "Salvando…"
+                    : profile?.hasPassword
+                      ? "Trocar senha"
+                      : "Definir senha"}
+                </button>
+              </form>
+              <div className="profile-section">
+                <h3>Segurança</h3>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={profileBusy}
+                  onClick={logoutOthers}
+                >
+                  Sair de todos os outros dispositivos
+                </button>
+              </div>
+              {(profileError || profileNotice) && (
+                <p
+                  className={profileError ? "form-error" : "help"}
+                  role={profileError ? "alert" : undefined}
+                >
+                  {profileError || profileNotice}
+                </p>
+              )}
+              <div className="profile-section">
+                <h3>Zona de risco</h3>
+                {confirmDeleteAccount ? (
+                  <div className="delete-confirm">
+                    <p>
+                      Excluir sua conta apaga todas as suas coleções e favoritos.
+                      Esta ação não pode ser desfeita.
+                    </p>
+                    {profile?.hasPassword && (
+                      <label>
+                        Confirme sua senha
+                        <input
+                          type="password"
+                          value={deletePassword}
+                          onChange={(e) => setDeletePassword(e.target.value)}
+                          autoComplete="current-password"
+                        />
+                      </label>
+                    )}
+                    <button
+                      type="button"
+                      disabled={profileBusy}
+                      className="danger"
+                      onClick={deleteAccount}
+                    >
+                      Confirmar exclusão
+                    </button>
+                    <button
+                      type="button"
+                      disabled={profileBusy}
+                      className="secondary"
+                      onClick={() => setConfirmDeleteAccount(false)}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="danger-text"
+                    disabled={profileBusy}
+                    onClick={() => setConfirmDeleteAccount(true)}
+                  >
+                    Excluir conta
+                  </button>
+                )}
+              </div>
+            </div>
+          </section>
+        ) : (
+        <>
         <section className="hero">
           {!readOnly && (
             <>
@@ -878,6 +1398,8 @@ export default function App() {
             </div>
           )}
         </section>
+        </>
+        )}
       </main>
       <footer>
         <span>
@@ -1107,7 +1629,7 @@ export default function App() {
                     {[
                       ["circle", "Redondo"],
                       ["square", "Quadrado"],
-                      ["rounded", "Estilo iPhone"],
+                      ["rounded", "Arredondado"],
                     ].map(([shape, label]) => (
                       <button
                         type="button"

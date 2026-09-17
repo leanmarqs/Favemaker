@@ -1,7 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import { PrismaClient } from "@prisma/client";
-import { randomBytes, createHash } from "node:crypto";
+import { installAuth } from "./auth.mjs";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { metadata, normalizeUrl, resolveImage } from "./metadata.mjs";
@@ -37,29 +37,8 @@ app.get("/api/public/:id", async (req, res) => {
   });
   res.json({ collections });
 });
-app.use("/api", async (req, res, next) => {
-  try {
-    let token = req.headers.cookie?.match(
-      /(?:^|;\s*)pinicon_session=([a-f0-9]{64})(?:;|$)/,
-    )?.[1];
-    if (!token) token = randomBytes(32).toString("hex");
-    const tokenHash = createHash("sha256").update(token).digest("hex");
-    req.owner = await prisma.owner.upsert({
-      where: { tokenHash },
-      create: { tokenHash },
-      update: {},
-    });
-    res.cookie("pinicon_session", token, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 365 * 86400000,
-    });
-    next();
-  } catch (e) {
-    next(e);
-  }
-});
+// Public profiles stay accessible; all personal routes below require a session.
+installAuth(app, prisma);
 app.get("/api/collections", async (req, res) => {
   const collections = await prisma.collection.findMany({
     where: { ownerId: req.owner.id },
@@ -204,8 +183,15 @@ cleanup.unref();
 app.use("/api", (_req, res) =>
   res.status(404).json({ error: "Recurso não encontrado." }),
 );
-app.use(express.static(resolve("dist")));
-app.get("/{*path}", (_req, res) => res.sendFile(resolve("dist/index.html")));
+const isDev = (process.env.npm_lifecycle_event || "").startsWith("dev");
+if (isDev) {
+  app.use((_req, res) =>
+    res.status(404).json({ error: "Esta porta serve apenas a API em desenvolvimento. Acesse http://localhost:3000." }),
+  );
+} else {
+  app.use(express.static(resolve("dist")));
+  app.get("/{*path}", (_req, res) => res.sendFile(resolve("dist/index.html")));
+}
 app.use((error, _req, res, _next) => {
   console.error(error.message);
   res

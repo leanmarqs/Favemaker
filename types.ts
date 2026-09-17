@@ -1,3 +1,13 @@
+export interface Account {
+  id: string;
+  name: string;
+  displayName: string;
+  username: string;
+  email: string;
+  avatar: string;
+  hasPassword: boolean;
+  googleLinked: boolean;
+}
 export interface Bookmark {
   id: string;
   collectionId: string;

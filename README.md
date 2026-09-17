@@ -27,6 +27,16 @@ Abra http://localhost:3000. A API utiliza a porta 3001; o Vite encaminha `/api` 
 
 ## Funcionalidades
 
+### Login
+
+Cadastro com usuário (3–32 letras, números, ponto, hífen ou sublinhado) e senha (10–128 caracteres), login e logout. As senhas são armazenadas com scrypt e salt individual. Sessões duram 30 dias, usam cookies HttpOnly/SameSite e são revogadas ao sair. Em produção, configure `NODE_ENV=production` e HTTPS. O limite de tentativas é por IP e por processo; em múltiplas instâncias, configure também um limite compartilhado no proxy.
+
+Ao cadastrar uma conta, as coleções anônimas associadas ao cookie atual são preservadas. Entrar em uma conta existente carrega as coleções dessa conta. Perfis públicos continuam acessíveis sem login. Contas Google e contas com senha são independentes; não há associação automática por email.
+
+Para habilitar Google, crie um cliente OAuth do tipo **Aplicativo da Web** no Google Cloud, configure a tela de consentimento e adicione a origem do site em **Origens JavaScript autorizadas** (em desenvolvimento, `http://localhost:3000`; adicione `http://localhost:3001` se acessar diretamente a API). Defina `GOOGLE_CLIENT_ID` no `.env` e reinicie o servidor. O fluxo usa o botão oficial Google Identity Services e valida o token no servidor: https://developers.google.com/identity/gsi/web/guides/verify-google-id-token. Não precisa de Client Secret neste fluxo. Sem Client ID, o botão fica indisponível.
+
+Após atualizar, execute `npm run db:migrate`, `npm run db:generate` e `npm run build`. No Windows, pare a API antes de gerar o Prisma Client caso a DLL esteja em uso. Para testes de integração, use `TEST_DATABASE_URL` apontando para um banco migrado de testes. Recuperação de senha e associação de métodos de login não estão incluídas.
+
 - CRUD de coleções e favoritos, incluindo mover um favorito para outra coleção.
 - Coleção obrigatória para todo favorito, com criação dentro do modal.
 - Coleções em pílulas, até dez favoritos por página e setas de navegação. Em telas pequenas, a linha também permite rolagem horizontal.

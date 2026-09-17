@@ -5,10 +5,62 @@ datasource db {
   provider = "postgresql"
   url = env("DATABASE_URL")
 }
+enum AccountStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  DISABLED
+}
 model Owner {
   id String @id @default(uuid())
   tokenHash String @unique
+  username String? @unique
+  email String? @unique
+  displayName String?
+  avatar String @default("")
+  passwordHash String?
+  googleId String? @unique
+  status AccountStatus @default(ACTIVE)
+  failedLoginAttempts Int @default(0)
+  lockedUntil DateTime?
+  passwordChangedAt DateTime?
   collections Collection[]
+  sessions Session[]
+  emailVerifications EmailVerification[]
+  passwordResets PasswordReset[]
+  authEvents AuthEvent[]
+}
+model Session {
+  tokenHash String @id
+  ownerId String
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  @@index([ownerId])
+}
+model EmailVerification {
+  tokenHash String @id
+  ownerId String
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  @@index([ownerId])
+}
+model PasswordReset {
+  tokenHash String @id
+  ownerId String
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  @@index([ownerId])
+}
+// Log de auditoria de segurança (login, bloqueio, troca de senha, etc.) — nunca inclui senha ou tokens.
+model AuthEvent {
+  id String @id @default(uuid())
+  ownerId String?
+  owner Owner? @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  eventType String
+  ip String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  @@index([ownerId])
+  @@index([eventType])
 }
 model Collection {
   id String @id @default(uuid())
