@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Pinicon — Salvar</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <img src="icons/icon32.png" alt="" />
+      <strong>Pinicon</strong>
+    </header>
+
+    <section id="loading" class="state">Carregando…</section>
+
+    <section id="logged-out" class="state hidden">
+      <p>Você não está logado no Pinicon neste navegador.</p>
+      <button id="open-login" type="button" class="primary">Abrir Pinicon</button>
+    </section>
+
+    <section id="logged-in" class="state hidden">
+      <p id="preview-loading" class="feedback">Lendo a página…</p>
+      <p id="preview-unavailable" class="feedback hidden">
+        Não é possível salvar esta página (abra um site para capturar).
+      </p>
+
+      <div id="preview" class="preview hidden">
+        <div class="preview-head">
+          <img id="preview-icon" class="preview-icon" alt="" />
+          <label class="field">
+            Nome
+            <input id="preview-name" type="text" maxlength="120" />
+          </label>
+        </div>
+        <label class="field">
+          Descrição
+          <textarea id="preview-description" maxlength="2000" rows="3"></textarea>
+        </label>
+
+        <label class="field">
+          Coleção
+          <select id="collection-select"></select>
+        </label>
+
+        <button id="save-now" type="button" class="primary">
+          Salvar no Pinicon
+        </button>
+        <p id="save-feedback" class="feedback"></p>
+      </div>
+    </section>
+
+    <script src="popup.js" type="module"></script>
+  </body>
+</html>

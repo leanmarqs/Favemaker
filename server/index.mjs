@@ -13,15 +13,35 @@ const developmentOrigins = new Set([
   "http://127.0.0.1:3000",
 ]);
 
+// Origens de extensões de navegador (ex: a extensão "Salvar no Pinicon"). Uma página
+// maliciosa nunca tem essa origem — só uma extensão instalada pelo próprio usuário.
+function isExtensionOrigin(origin) {
+  return /^(chrome|moz)-extension:\/\//.test(origin || "");
+}
+
 function hasAllowedOrigin(req) {
   const origin = req.headers.origin;
   if (!origin) return true;
   if (new URL(origin).host === req.headers.host) return true;
+  if (isExtensionOrigin(origin)) return true;
   return process.env.NODE_ENV !== "production" && developmentOrigins.has(origin);
 }
 
 app.disable("x-powered-by");
 app.use(express.json({ limit: "3mb" }));
+// CORS para extensões de navegador: elas rodam numa origem própria (chrome-extension://…)
+// e autenticam com o header X-Pinicon-Session (ver cookieToken em auth.mjs) em vez do
+// cookie de sessão, então precisam de uma resposta CORS explícita para ler o resultado.
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (isExtensionOrigin(origin)) {
+    res.set("Access-Control-Allow-Origin", origin);
+    res.set("Access-Control-Allow-Headers", "Content-Type, X-Pinicon-Session");
+    res.set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
+    if (req.method === "OPTIONS") return res.sendStatus(204);
+  }
+  next();
+});
 app.use("/api", (req, res, next) => {
   res.set("Cache-Control", "no-store");
   if (["POST", "PATCH", "DELETE"].includes(req.method) && !hasAllowedOrigin(req))

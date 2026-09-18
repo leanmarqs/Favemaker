@@ -7,7 +7,15 @@ import { resolveImage } from "./metadata.mjs";
 const scrypt = promisify(derive);
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const cookieOptions = { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/" };
-const cookieToken = (req) => req.headers.cookie?.match(/(?:^|;\s*)pinicon_session=([a-f0-9]{64})(?:;|$)/)?.[1];
+// Extensões de navegador (ex: "Salvar no Pinicon") não recebem o cookie HttpOnly
+// automaticamente entre origens, então leem o valor via chrome.cookies e o enviam
+// explicitamente neste header — o mesmo token, só um transporte diferente.
+const HEADER_TOKEN = /^[a-f0-9]{64}$/;
+const cookieToken = (req) => {
+  const header = req.headers["x-pinicon-session"];
+  if (typeof header === "string" && HEADER_TOKEN.test(header)) return header;
+  return req.headers.cookie?.match(/(?:^|;\s*)pinicon_session=([a-f0-9]{64})(?:;|$)/)?.[1];
+};
 const MIN_PASSWORD = 8;
 const SESSION_DURATION = 30 * 86400000;
 const LOCK_THRESHOLD = 5;

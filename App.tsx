@@ -149,6 +149,7 @@ function Sphere({
 function CollectionRow({
   collection,
   readOnly,
+  toolbarsEnabled,
   edit,
   remove,
   add,
@@ -158,6 +159,7 @@ function CollectionRow({
 }: {
   collection: Collection;
   readOnly: boolean;
+  toolbarsEnabled: boolean;
   edit: () => void;
   remove: () => void;
   add: () => void;
@@ -170,13 +172,18 @@ function CollectionRow({
   const [isPageTransitioning, setIsPageTransitioning] = useState(false);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc" | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
-  const [toolbar, setToolbar] = useState<{
-    bookmark?: Bookmark;
+  // Hover da coleção (geral) e hover de um favorito específico são independentes:
+  // cada um tem seu próprio timer, para que passar o mouse sobre os favoritos ao
+  // tentar alcançar outra área da coleção não cancele o hover da coleção (e vice-versa).
+  const [collectionHovered, setCollectionHovered] = useState(false);
+  const [bookmarkToolbar, setBookmarkToolbar] = useState<{
+    bookmark: Bookmark;
     x?: number;
     y?: number;
   } | null>(null);
   const pageTransitionTimer = useRef<number | null>(null);
-  const toolbarTimer = useRef<number | null>(null);
+  const collectionToolbarTimer = useRef<number | null>(null);
+  const bookmarkToolbarTimer = useRef<number | null>(null);
   const pages = Math.max(1, Math.ceil(collection.bookmarks.length / 10));
   const active = Math.min(page, pages - 1);
   const bookmarks = sortDirection
@@ -192,7 +199,8 @@ function CollectionRow({
       if (pageTransitionTimer.current) {
         window.clearTimeout(pageTransitionTimer.current);
       }
-      if (toolbarTimer.current) window.clearTimeout(toolbarTimer.current);
+      if (collectionToolbarTimer.current) window.clearTimeout(collectionToolbarTimer.current);
+      if (bookmarkToolbarTimer.current) window.clearTimeout(bookmarkToolbarTimer.current);
     },
     [],
   );
@@ -206,38 +214,47 @@ function CollectionRow({
       setIsPageTransitioning(false);
     }, 180);
   };
-  const scheduleToolbar = (next: {
-    bookmark?: Bookmark;
-    x?: number;
-    y?: number;
-  }) => {
-    if (toolbarTimer.current) window.clearTimeout(toolbarTimer.current);
-    setToolbar(null);
-    toolbarTimer.current = window.setTimeout(() => setToolbar(next), 500);
+  useEffect(() => {
+    if (toolbarsEnabled) return;
+    if (collectionToolbarTimer.current) window.clearTimeout(collectionToolbarTimer.current);
+    if (bookmarkToolbarTimer.current) window.clearTimeout(bookmarkToolbarTimer.current);
+    setCollectionHovered(false);
+    setBookmarkToolbar(null);
+  }, [toolbarsEnabled]);
+  const scheduleCollectionToolbar = () => {
+    if (!toolbarsEnabled) return;
+    if (collectionToolbarTimer.current) window.clearTimeout(collectionToolbarTimer.current);
+    collectionToolbarTimer.current = window.setTimeout(() => setCollectionHovered(true), 500);
   };
-  const clearToolbar = () => {
-    if (toolbarTimer.current) window.clearTimeout(toolbarTimer.current);
-    setToolbar(null);
+  const deferCollectionToolbarClear = () => {
+    if (collectionToolbarTimer.current) window.clearTimeout(collectionToolbarTimer.current);
+    collectionToolbarTimer.current = window.setTimeout(() => setCollectionHovered(false), 350);
   };
-  const deferToolbarClear = () => {
-    if (toolbarTimer.current) window.clearTimeout(toolbarTimer.current);
-    toolbarTimer.current = window.setTimeout(
-      () => setToolbar(null),
-      350,
-    );
+  const keepCollectionToolbarVisible = () => {
+    if (collectionToolbarTimer.current) window.clearTimeout(collectionToolbarTimer.current);
   };
-  const keepToolbarVisible = () => {
-    if (toolbarTimer.current) window.clearTimeout(toolbarTimer.current);
+  const scheduleBookmarkToolbar = (next: { bookmark: Bookmark; x?: number; y?: number }) => {
+    if (!toolbarsEnabled) return;
+    if (bookmarkToolbarTimer.current) window.clearTimeout(bookmarkToolbarTimer.current);
+    setBookmarkToolbar(null);
+    bookmarkToolbarTimer.current = window.setTimeout(() => setBookmarkToolbar(next), 500);
+  };
+  const deferBookmarkToolbarClear = () => {
+    if (bookmarkToolbarTimer.current) window.clearTimeout(bookmarkToolbarTimer.current);
+    bookmarkToolbarTimer.current = window.setTimeout(() => setBookmarkToolbar(null), 350);
+  };
+  const keepBookmarkToolbarVisible = () => {
+    if (bookmarkToolbarTimer.current) window.clearTimeout(bookmarkToolbarTimer.current);
   };
   const clearBookmarkToolbar = (event: React.MouseEvent<HTMLDivElement>) => {
     const nextTarget = event.relatedTarget as HTMLElement | null;
-    if (!nextTarget?.closest(".favorite-controls")) deferToolbarClear();
+    if (!nextTarget?.closest(".favorite-controls")) deferBookmarkToolbarClear();
   };
   return (
     <article
-      className={`collection ${toolbar ? "has-visible-toolbar" : ""}`}
-      onMouseEnter={() => scheduleToolbar({})}
-      onMouseLeave={deferToolbarClear}
+      className={`collection ${bookmarkToolbar || collectionHovered ? "has-visible-toolbar" : ""}`}
+      onMouseEnter={scheduleCollectionToolbar}
+      onMouseLeave={deferCollectionToolbarClear}
     >
       <div className="collection-heading">
         <div className="collection-label">
@@ -254,17 +271,17 @@ function CollectionRow({
       )}
       <div className={`pill ${isExpanded ? "is-expanded" : ""}`}>
         {!readOnly && (
-          toolbar?.bookmark ? (
-            <div className="collection-controls favorite-controls" style={{ left: toolbar.x, top: toolbar.y }} aria-label={`Ações do favorito ${toolbar.bookmark.name}`} onMouseEnter={keepToolbarVisible} onMouseLeave={deferToolbarClear}>
-              <button type="button" aria-label={`Editar favorito ${toolbar.bookmark.name}`} title="Editar favorito" onClick={() => editBookmark(toolbar.bookmark!)}>
+          bookmarkToolbar ? (
+            <div className="collection-controls favorite-controls" style={{ left: bookmarkToolbar.x, top: bookmarkToolbar.y }} aria-label={`Ações do favorito ${bookmarkToolbar.bookmark.name}`} onMouseEnter={keepBookmarkToolbarVisible} onMouseLeave={deferBookmarkToolbarClear}>
+              <button type="button" aria-label={`Editar favorito ${bookmarkToolbar.bookmark.name}`} title="Editar favorito" onClick={() => editBookmark(bookmarkToolbar.bookmark)}>
                 <Pencil size={13} />
               </button>
-              <button type="button" aria-label={`Excluir favorito ${toolbar.bookmark.name}`} title="Excluir favorito" onClick={() => removeBookmark(toolbar.bookmark!)}>
+              <button type="button" aria-label={`Excluir favorito ${bookmarkToolbar.bookmark.name}`} title="Excluir favorito" onClick={() => removeBookmark(bookmarkToolbar.bookmark)}>
                 <Trash2 size={13} />
               </button>
             </div>
-          ) : toolbar ? (
-            <div className="collection-controls" aria-label={`Ações da coleção ${collection.name}`} onMouseEnter={keepToolbarVisible} onMouseLeave={deferToolbarClear}>
+          ) : collectionHovered ? (
+            <div className="collection-controls" aria-label={`Ações da coleção ${collection.name}`} onMouseEnter={keepCollectionToolbarVisible} onMouseLeave={deferCollectionToolbarClear}>
               <button type="button" aria-label={`${isExpanded ? "Recolher" : "Expandir"} coleção ${collection.name}`} aria-expanded={isExpanded} title={isExpanded ? "Recolher coleção" : "Expandir coleção"} onClick={() => setIsExpanded((value) => !value)}>
                 {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
               </button>
@@ -310,7 +327,7 @@ function CollectionRow({
                   const pill = event.currentTarget.closest(".pill");
                   const favoriteRect = event.currentTarget.getBoundingClientRect();
                   const pillRect = pill?.getBoundingClientRect();
-                  scheduleToolbar({
+                  scheduleBookmarkToolbar({
                     bookmark: b,
                     x: pillRect
                       ? favoriteRect.left - pillRect.left + favoriteRect.width / 2
@@ -387,6 +404,9 @@ export default function App({ account, onLogout, googleClientId }: { account?: A
   const [usage, setUsage] = useState<Record<string, number>>(() => JSON.parse(localStorage.getItem("pinicon-usage") || "{}"));
   const [filterOpen, setFilterOpen] = useState(false);
   const [activeFilters, setActiveFilters] = useState<FilterKey[]>([]);
+  // Controla se as barras de ferramentas (da coleção e dos favoritos) aparecem ao
+  // passar o mouse. Desligado por padrão para não atrapalhar quem só quer navegar.
+  const [toolbarsEnabled, setToolbarsEnabled] = useState(false);
   const [isCollectionCreatorOpen, setIsCollectionCreatorOpen] = useState(false);
   const [collectionDraft, setCollectionDraft] = useState<Draft>({ ...blank });
   const [profile, setProfile] = useState<Account | undefined>(account);
@@ -462,6 +482,18 @@ export default function App({ account, onLogout, googleClientId }: { account?: A
       setLoading(false);
     }
   }
+  // Atualização silenciosa (sem o spinner de tela cheia): usada quando a aba volta a
+  // ficar visível, para refletir favoritos salvos por fora (ex: pela extensão) sem
+  // exigir um F5 manual. Falhas aqui não perturbam o que já está na tela.
+  async function silentReload() {
+    try {
+      const data = await api(
+        sharedId ? `/public/${encodeURIComponent(sharedId)}` : "/collections",
+      );
+      setCollections(data.collections);
+      setOwnerId(data.ownerId || "");
+    } catch {}
+  }
   function toggleStoredId(
     id: string,
     current: string[],
@@ -497,6 +529,17 @@ export default function App({ account, onLogout, googleClientId }: { account?: A
   useEffect(() => {
     void reload();
   }, []);
+  useEffect(() => {
+    function refreshIfVisible() {
+      if (document.visibilityState === "visible") void silentReload();
+    }
+    window.addEventListener("focus", refreshIfVisible);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    return () => {
+      window.removeEventListener("focus", refreshIfVisible);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
+  }, [sharedId]);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     try {
@@ -643,19 +686,22 @@ export default function App({ account, onLogout, googleClientId }: { account?: A
     if (collectionModalDrag.current?.pointerId !== event.pointerId) return;
     collectionModalDrag.current = null;
   }
-  async function submitUrl(e: React.FormEvent) {
-    e.preventDefault();
-    if (!url.trim() || busy) return;
+  async function addBookmarkFromUrl(rawUrl: string) {
     setBusy(true);
     setNotice("");
     try {
-      const data = await api("/metadata", "POST", { url: url.trim() });
+      const data = await api("/metadata", "POST", { url: rawUrl });
       open("bookmark", data);
     } catch (e) {
       setNotice((e as Error).message);
     } finally {
       setBusy(false);
     }
+  }
+  async function submitUrl(e: React.FormEvent) {
+    e.preventDefault();
+    if (!url.trim() || busy) return;
+    void addBookmarkFromUrl(url.trim());
   }
   async function discoverBookmarkMetadata() {
     const requestedUrl = draft.url.trim();
@@ -708,7 +754,10 @@ export default function App({ account, onLogout, googleClientId }: { account?: A
             ? "Coleção criada. Pronta para novas descobertas."
             : "Favorito guardado na sua coleção.",
       );
-      await reload();
+      // Recarga silenciosa (sem o spinner de tela cheia de reload()): trocar a lista
+      // inteira por um spinner remonta as CollectionRow, perdendo estado local delas
+      // (coleção expandida, página atual, ordenação) mesmo sem o usuário ter mexido nisso.
+      await silentReload();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -742,7 +791,7 @@ export default function App({ account, onLogout, googleClientId }: { account?: A
       );
       closeMainModal();
       setNotice("Excluído com sucesso.");
-      await reload();
+      await silentReload();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -1252,6 +1301,7 @@ export default function App({ account, onLogout, googleClientId }: { account?: A
           </section>
         ) : (
         <>
+        <div className="sticky-header">
         <section className="hero">
           {!readOnly && (
             <>
@@ -1312,12 +1362,23 @@ export default function App({ account, onLogout, googleClientId }: { account?: A
             </>
           )}
         </section>
-        <section className="library">
           <div className="library-heading">
             <div>
               <h2>
                 {readOnly ? "Coleções públicas" : "Suas coleções"}
                 <span>{collections.length}</span>
+                {!readOnly && (
+                  <button
+                    type="button"
+                    className="collections-frame-toggle"
+                    aria-pressed={toolbarsEnabled}
+                    aria-label={toolbarsEnabled ? "Desativar barras de ferramentas" : "Ativar barras de ferramentas"}
+                    title={toolbarsEnabled ? "Desativar barras de ferramentas" : "Ativar barras de ferramentas"}
+                    onClick={() => setToolbarsEnabled((value) => !value)}
+                  >
+                    <Pencil size={13} />
+                  </button>
+                )}
               </h2>
             </div>
             <div className="library-meta">
@@ -1332,6 +1393,9 @@ export default function App({ account, onLogout, googleClientId }: { account?: A
               )}
             </div>
           </div>
+        </div>
+        <section className="library">
+          <div className="collections-frame">
           {loading ? (
             <div className="empty-state">
               <span className="loader" />
@@ -1352,6 +1416,7 @@ export default function App({ account, onLogout, googleClientId }: { account?: A
                 key={c.id}
                 collection={c}
                 readOnly={readOnly || c.id === "temporary-filter"}
+                toolbarsEnabled={toolbarsEnabled}
                 edit={() => open("collection", c)}
                 remove={() => {
                   open("collection", c);
@@ -1397,6 +1462,7 @@ export default function App({ account, onLogout, googleClientId }: { account?: A
               )}
             </div>
           )}
+          </div>
         </section>
         </>
         )}

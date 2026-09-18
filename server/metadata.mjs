@@ -82,7 +82,7 @@ export async function safeFetch(value, redirects = 0) {
     throw new Error("Não foi possível consultar o site.");
   return result;
 }
-export async function imageData(buffer) {
+export async function imageData(buffer, { crop = "inside" } = {}) {
   if (isIco(buffer)) {
     if (buffer.readUInt16LE(4) > 32) throw new Error("O ícone contém imagens demais.");
     const images = await decodeIco(buffer, "image/png");
@@ -90,8 +90,19 @@ export async function imageData(buffer) {
     if (!images.length) throw new Error("Arquivo ICO inválido.");
     buffer = Buffer.from(images[0].buffer);
   }
+  // "cover" é usado pra imagem de conteúdo (og:image de um post específico): ela
+  // quase nunca é quadrada, e o Pinicon mostra o favorito num círculo — em vez de
+  // encolher mantendo a proporção (sobraria fundo/letterbox), recorta um quadrado
+  // central com a estratégia "attention" do sharp, que tenta manter a região mais
+  // relevante da imagem (bordas costumam ter só texto/gradiente decorativo).
   const png = await sharp(buffer, { limitInputPixels: 16000000 })
-    .resize(128, 128, { fit: "inside", withoutEnlargement: true })
+    .resize(
+      128,
+      128,
+      crop === "cover"
+        ? { fit: "cover", position: sharp.strategy.attention }
+        : { fit: "inside", withoutEnlargement: true },
+    )
     .png()
     .toBuffer();
   const { dominant } = await sharp(png).stats();
@@ -102,7 +113,7 @@ export async function imageData(buffer) {
       .join("");
   return { favicon: `data:image/png;base64,${png.toString("base64")}`, color };
 }
-export async function resolveImage(value) {
+export async function resolveImage(value, options) {
   if (!value) return { favicon: "", color: "#a3b99a" };
   if (value.startsWith("data:")) {
     if (
@@ -111,15 +122,16 @@ export async function resolveImage(value) {
       )
     )
       throw new Error("Use uma imagem PNG, JPEG, WebP, GIF ou ICO.");
-    return imageData(Buffer.from(value.split(",")[1], "base64"));
+    return imageData(Buffer.from(value.split(",")[1], "base64"), options);
   }
-  return imageData((await safeFetch(value)).buffer);
+  return imageData((await safeFetch(value)).buffer, options);
 }
 export async function metadata(value) {
   const url = normalizeUrl(value);
   const hostname = new URL(url).hostname.replace(/^www\./, "");
   let title = hostname,
-    description = "";
+    description = "",
+    contentImage = "";
   const candidates = [];
   try {
     const page = await safeFetch(url);
@@ -133,6 +145,24 @@ export async function metadata(value) {
       $('meta[property="og:description"]').attr("content") ||
       "";
     const base = new URL($("base").attr("href") || page.url, page.url);
+    // Numa home genérica (path "/" sem og:type específico), o og:image costuma ser
+    // um banner de marketing sem relação com nenhum conteúdo — o favicon do site
+    // identifica melhor "de que site é" do que essa captura genérica. Já num post,
+    // artigo ou vídeo específico, o og:image É o conteúdo, e vale mais que o favicon
+    // do site (que seria igual em qualquer outra página do mesmo site).
+    const isRootPath = ["/", ""].includes(new URL(page.url).pathname);
+    const ogType = $('meta[property="og:type"]').attr("content");
+    const looksLikeGenericHome = isRootPath && (!ogType || ogType === "website");
+    if (!looksLikeGenericHome) {
+      const ogImage =
+        $('meta[property="og:image"]').attr("content") ||
+        $('meta[name="twitter:image"]').attr("content");
+      if (ogImage) {
+        try {
+          contentImage = new URL(ogImage, base).href;
+        } catch {}
+      }
+    }
     $("link[rel]").each((_, el) => {
       const rel = $(el).attr("rel") || "";
       if (/(^|\s)(icon|apple-touch-icon|shortcut)(\s|$)/i.test(rel)) {
@@ -162,8 +192,15 @@ export async function metadata(value) {
   candidates.sort((a, b) => b.size - a.size);
   candidates.push({ url: new URL("/favicon.ico", url).href });
   const unique = [...new Set(candidates.map((c) => c.url))].slice(0, 6);
-  // Tentativas simultâneas, respeitando a prioridade dos ícones declarados.
-  const images = await Promise.allSettled(unique.map(resolveImage));
+  // Tentativas simultâneas (pra não pagar duas viagens sequenciais quando a
+  // primeira falhar), mas a ordem do array decide a prioridade: a imagem de
+  // conteúdo (quando existe) vem antes dos ícones do site.
+  const attempts = contentImage
+    ? [{ url: contentImage, crop: "cover" }, ...unique.map((u) => ({ url: u, crop: "inside" }))]
+    : unique.map((u) => ({ url: u, crop: "inside" }));
+  const images = await Promise.allSettled(
+    attempts.map((a) => resolveImage(a.url, { crop: a.crop })),
+  );
   const found = images.find((r) => r.status === "fulfilled");
   return {
     url,

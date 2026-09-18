@@ -317,6 +317,16 @@ button {
 .app-shell > main::-webkit-scrollbar {
   display: none;
 }
+.sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg);
+  /* Esse respiro precisa estar AQUI, dentro do próprio cabeçalho fixo — se
+     estivesse como margem/padding do conteúdo abaixo, ele rolaria junto com o
+     conteúdo e sumiria, deixando o container colado no cabeçalho durante o scroll. */
+  padding-bottom: 28px;
+}
 .app-shell > header,
 .app-shell > footer {
   flex-shrink: 0;
@@ -429,9 +439,6 @@ button {
 .hero {
   text-align: center;
   padding: 32px 0;
-  position: sticky;
-  top: 0;
-  z-index: 10;
   background: var(--bg);
 }
 .eyebrow {
@@ -571,16 +578,43 @@ textarea::placeholder {
 }
 .library {
   max-width: 1100px;
-  margin: auto;
-  min-height: 340px;
+  width: 100%;
+  margin: 0 auto;
 }
 .library-heading {
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
-  margin-bottom: 26px;
   padding-top: 18px;
   border-top: 1px solid var(--border);
+}
+.collections-frame {
+  /* Sem altura/overflow própria: o container cresce junto com o conteúdo, e a
+     rolagem acontece na página (main), não numa barra de rolagem confinada aqui
+     dentro — evita a sensação de "caixinha apertada". */
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  padding: 24px;
+  margin-bottom: 48px;
+}
+.collections-frame-toggle {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  color: var(--muted);
+  background: var(--raised);
+  border: 1px solid var(--border);
+}
+.collections-frame-toggle:hover {
+  color: var(--text);
+}
+.collections-frame-toggle[aria-pressed="true"] {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 .section-kicker {
   font-size: 8px;
@@ -817,7 +851,7 @@ h3 {
   background: var(--orb);
   border: 1px solid #ffffff30;
   box-shadow: 0 5px 10px #0002;
-  transition: transform 0.22s;
+  transition: transform 0.22s, box-shadow 0.22s;
 }
 .sphere-square {
   border-radius: 0;
@@ -839,6 +873,10 @@ h3 {
 }
 .favorite > a:hover .sphere {
   transform: translateY(-4px) scale(1.06);
+  /* Sombra preta some no tema escuro (fundo já é quase preto) — o brilho usa a
+     própria cor da esfera, que sempre contrasta. Offset em 0 espalha o brilho
+     igual pros quatro lados, em vez de empilhar mais embaixo do que em cima. */
+  box-shadow: 0 0 12px color-mix(in srgb, var(--orb) 40%, transparent);
 }
 .page-arrow {
   width: 27px;

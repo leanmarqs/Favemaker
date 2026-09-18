@@ -48,3 +48,20 @@ test("decodifica arquivos ICO enviados pelo usuário", async () => {
   const result = await resolveImage(`data:image/x-icon;base64,${Buffer.from(ico).toString('base64')}`);
   assert.match(result.favicon, /^data:image\/png;base64,/);
 });
+
+test("crop 'cover' recorta imagem retangular (og:image) em quadrado, sem letterbox", async () => {
+  const banner = await sharp({
+    create: { width: 400, height: 100, channels: 4, background: "#33aa55" },
+  })
+    .png()
+    .toBuffer();
+  const result = await resolveImage(
+    `data:image/png;base64,${banner.toString("base64")}`,
+    { crop: "cover" },
+  );
+  const output = await sharp(
+    Buffer.from(result.favicon.split(",")[1], "base64"),
+  ).metadata();
+  assert.equal(output.width, 128);
+  assert.equal(output.height, 128);
+});
