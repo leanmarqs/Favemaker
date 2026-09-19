@@ -656,6 +656,14 @@ h2 {
 }
 .collection {
   margin-bottom: 27px;
+  position: relative;
+}
+/* A barra de edição e o cartão de prévia estouram pra fora do próprio pill (pra
+   cima, sobre a coleção vizinha). Sem isto, a coleção de baixo — mais nova no
+   DOM — pintava por cima dessa sobreposição mesmo sem ter z-index nenhum, já
+   que nenhum dos dois lados tinha contexto de empilhamento próprio. */
+.collection.has-visible-toolbar {
+  z-index: 2;
 }
 .collection-heading {
   display: flex;
@@ -708,6 +716,17 @@ h3 {
   gap: 10px;
   min-height: 82px;
   box-shadow: var(--shadow);
+  transition: padding-top 220ms ease;
+}
+/* Abre espaço no topo do pill pra barra da coleção não cobrir os ícones: o
+   valor cobre a margem acima dela (16px) + a altura da própria barra (30px) +
+   a margem abaixo, antes dos ícones (16px). Só quando a própria barra da
+   coleção está aberta (modo de edição ligado) — o cartão de prévia e a barra
+   de um favorito específico flutuam por cima do conteúdo (via z-index) em vez
+   de precisar de espaço reservado, então não devem esticar o container.
+   */
+.collection.toolbar-open .pill {
+  padding-top: 62px;
 }
 .pill.is-expanded {
   min-height: 0;
@@ -722,7 +741,6 @@ h3 {
   position: absolute;
   z-index: 2;
   left: 50%;
-  top: -6px;
   display: flex;
   align-items: center;
   gap: 1px;
@@ -735,17 +753,33 @@ h3 {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transform: translate(-50%, -100%) scale(0.94);
   transition:
     opacity 180ms ease,
     transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
     visibility 180ms;
 }
+/* Barra da coleção (expandir/ordenar/adicionar/editar/excluir): fica dentro do
+   próprio pill, colada no topo e centralizada — some junto com o modo de edição
+   em vez de depender de hover. A barra de um favorito específico (.favorite-controls)
+   usa posição própria (calculada em JS a partir do item passado o mouse), então
+   fica de fora dessa regra. */
+.collection-controls:not(.favorite-controls) {
+  top: 16px;
+  transform: translate(-50%, 0) scale(0.94);
+}
+.collection.has-visible-toolbar .collection-controls:not(.favorite-controls) {
+  transform: translate(-50%, 0) scale(1);
+}
+.collection-controls.favorite-controls {
+  transform: translate(-50%, -100%) scale(0.94);
+}
+.collection.has-visible-toolbar .collection-controls.favorite-controls {
+  transform: translate(-50%, -100%) scale(1);
+}
 .collection.has-visible-toolbar .collection-controls {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
-  transform: translate(-50%, -100%) scale(1);
 }
 .collection-controls button {
   width: 24px;
@@ -757,9 +791,184 @@ h3 {
   color: var(--text);
   background: var(--raised);
 }
+.collection-controls button.active {
+  color: var(--accent);
+}
 .collection-controls button:last-child:hover {
   color: #f09b9b;
   background: #b73c3c22;
+}
+/* Cartão de prévia ao estilo Netflix (hover de 1s sobre um ícone, com o modo de
+   edição desligado): a "capa" cresce a partir do próprio ícone, como se ele se
+   ampliasse virando o card, em vez de um tooltip flutuando separado.
+   Dois níveis por causa da animação: o "anchor" só posiciona (sem animação),
+   plantado exatamente no centro do ícone original (x, y vêm do JS); o card em
+   si escala de um ponto pequeno até o tamanho cheio, usando como origem (50%,
+   65px) — o centro da própria mídia no topo do card — pra essa animação crescer
+   ao redor do lugar onde o ícone estava, e não a partir do canto do card. */
+.favorite-preview-anchor {
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -65px);
+}
+.favorite-preview {
+  position: relative;
+  width: 220px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  box-shadow: 0 0 50px 6px #00000070;
+  transform-origin: 50% 65px;
+  animation: favorite-preview-in 280ms cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+/* Link "esticado" cobrindo o card inteiro (clicar em qualquer lugar dele abre
+   o favorito numa aba nova), como um card de catálogo — os botões continuam
+   clicáveis por cima porque têm z-index maior que esse overlay. */
+.favorite-preview-link {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+/* Encolhe de volta até o tamanho do ícone — o mesmo ponto de partida do
+   keyframe de entrada (scale 0.4, centrado no ícone) — em vez de só desfocar
+   no próprio tamanho. Classe à parte pra trocar a animação em andamento assim
+   que o mouse sai do card/ícone; o timer em deferPreviewCardClear no App.tsx
+   (que desmonta o card de fato) tem que ficar igual a essa duração pra não
+   cortar a animação no meio. */
+.favorite-preview.is-leaving {
+  animation: favorite-preview-out 220ms cubic-bezier(0.4, 0, 0.7, 1) both;
+}
+@keyframes favorite-preview-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.4);
+    filter: blur(10px);
+  }
+  55% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  78% {
+    transform: scale(1.035);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+}
+@keyframes favorite-preview-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.4);
+    filter: blur(6px);
+  }
+}
+.favorite-preview-media {
+  position: relative;
+  width: 100%;
+  height: 130px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.favorite-preview-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* Favicon pequeno de origem (ver PreviewFavicon no App.tsx): tamanho fixo e
+   moderado em vez de esticar pra cobrir os 220px do card, que deixaria a
+   imagem visivelmente pixelizada/borrada. */
+.favorite-preview-media img.is-small-source {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 10px #00000050);
+}
+.favorite-preview-media span {
+  font-size: 44px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 2px 8px #0005;
+}
+.favorite-preview-edit {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 8px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  color: #fff;
+  background: #00000066;
+  backdrop-filter: blur(4px);
+}
+.favorite-preview-edit:hover {
+  background: #000000a0;
+}
+/* Nome sobreposto no canto inferior esquerdo da própria thumbnail (como um
+   título de capa), com um degradê atrás pra continuar legível em cima de
+   qualquer imagem/cor de fundo. */
+.favorite-preview-name {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 20px 10px 8px;
+  background: linear-gradient(to top, #000000b3, transparent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  text-shadow: 0 1px 4px #0007;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.favorite-preview-footer {
+  padding: 12px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.favorite-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.favorite-preview-actions button {
+  position: relative;
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: var(--text);
+  border: 1.5px solid var(--muted);
+}
+.favorite-preview-actions button:hover {
+  border-color: var(--text);
+  background: var(--surface);
+}
+.favorite-preview-actions button.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.favorite-preview-meta span {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--muted);
 }
 .favorites {
   flex: 1;
@@ -851,7 +1060,9 @@ h3 {
   background: var(--orb);
   border: 1px solid #ffffff30;
   box-shadow: 0 5px 10px #0002;
-  transition: transform 0.22s, box-shadow 0.22s;
+  transition:
+    transform 0.22s,
+    box-shadow 0.22s;
 }
 .sphere-square {
   border-radius: 0;
@@ -877,6 +1088,60 @@ h3 {
      própria cor da esfera, que sempre contrasta. Offset em 0 espalha o brilho
      igual pros quatro lados, em vez de empilhar mais embaixo do que em cima. */
   box-shadow: 0 0 12px color-mix(in srgb, var(--orb) 40%, transparent);
+}
+/* Grupo de favoritos (várias molduras numa só, estilo App Library do iPhone):
+   reaproveita o tamanho/formato/hover da .sphere comum, só trocando o
+   conteúdo por uma mini-grade 2x2 dos favicons de dentro. */
+.group-tile {
+  position: relative;
+  cursor: pointer;
+}
+.group-tile:hover {
+  transform: translateY(-4px) scale(1.06);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--orb) 40%, transparent);
+}
+.group-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2px;
+  width: 66%;
+  height: 66%;
+}
+.group-tile-grid img,
+.group-tile-letter {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 22%;
+  background: #ffffff25;
+}
+.group-tile-letter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  font-weight: 600;
+  color: #fff;
+}
+.group-tile-badge {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 4px;
+  color: var(--text);
+}
+/* Arrastar um ícone (só com o lápis ligado) sobre outro pra agrupar: contorno
+   destacado no alvo enquanto o item arrastado passa por cima dele. */
+.favorite.drop-target {
+  border-radius: 30%;
+  outline: 2px dashed var(--accent);
+  outline-offset: 3px;
 }
 .page-arrow {
   width: 27px;
@@ -1095,6 +1360,10 @@ dialog::backdrop {
 }
 .bookmark-actions button.active {
   color: var(--accent);
+}
+.bookmark-actions button.danger-icon:hover {
+  color: #f09b9b;
+  background: #b73c3c22;
 }
 .modal-heading.draggable {
   cursor: grab;
@@ -1350,6 +1619,7 @@ textarea {
   font-size: 11px;
   text-align: left;
   text-overflow: ellipsis;
+  text-decoration: none;
   white-space: nowrap;
 }
 .collection-bookmark-actions {
@@ -1526,6 +1796,34 @@ textarea {
   border-top: 1px solid var(--border);
   margin-top: 20px;
   padding-top: 16px;
+}
+/* Modal enxuto de confirmação de exclusão (excluir pelo ícone direto, sem
+   abrir a janela de edição inteira): mais estreito que o modal padrão, e sem
+   a borda/espaçamento de topo do .delete-confirm porque aqui ele já é o
+   único conteúdo do modal, logo abaixo do título. */
+.confirm-dialog {
+  width: 380px;
+}
+.confirm-dialog .delete-confirm {
+  border-top: none;
+  margin-top: 0;
+  padding-top: 0;
+}
+.group-dialog {
+  width: 420px;
+}
+.group-dialog-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.group-dialog-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
 }
 .delete-confirm p {
   font-size: 12px;

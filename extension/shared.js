@@ -69,3 +69,84 @@ export async function fetchMetadata(baseUrl, url) {
     body: JSON.stringify({ url }),
   });
 }
+
+// Resolve uma imagem (favicon, og:image, poster de vídeo, ...) em data URI já
+// recortada — mesmo endpoint que o próprio site usa pra ícones manuais.
+// crop: "cover" pede o recorte quadrado centralizado (ver imageData em
+// server/metadata.mjs), melhor pra thumbnails retangulares de vídeo/post.
+export async function resolveIcon(baseUrl, favicon, crop) {
+  return apiFetch(baseUrl, "/api/icon", {
+    method: "POST",
+    body: JSON.stringify({ favicon, crop }),
+  });
+}
+
+// Roda DENTRO da página ativa (via chrome.scripting.executeScript), por isso é
+// autocontida, sem closures externas. Existe porque alguns sites (TikTok,
+// Instagram, ...) bloqueiam ou servem uma página vazia pra requisições feitas
+// pelo SERVIDOR (sem og:image de verdade) — mas a página já carregada no
+// navegador tem os metadados certos, então lê-se direto dali como reforço.
+// Ordem de prioridade: poster do <video> > og:image > twitter:image > frame
+// capturado do vídeo em reprodução (só como último recurso, ver abaixo).
+function scrapeActiveImage() {
+  const meta = (name) =>
+    document.querySelector(`meta[property="${name}"]`)?.getAttribute("content") ||
+    document.querySelector(`meta[name="${name}"]`)?.getAttribute("content") ||
+    "";
+  const toAbsolute = (value) => {
+    if (!value) return "";
+    try {
+      return new URL(value, document.baseURI).href;
+    } catch {
+      return "";
+    }
+  };
+  // O poster do <video> em reprodução é literalmente a miniatura do vídeo
+  // específico que está na tela — mais confiável que og:image em sites que só
+  // atualizam esse meta tag na navegação inicial da SPA, não a cada vídeo.
+  const poster = document.querySelector("video[poster]")?.getAttribute("poster");
+  const declared = toAbsolute(poster || meta("og:image") || meta("twitter:image"));
+  if (declared) return declared;
+  // Último recurso: nenhuma miniatura declarada em lugar nenhum (nem poster,
+  // nem og:image/twitter:image) — tenta capturar o frame atual de um vídeo em
+  // reprodução desenhando ele num <canvas>. Só considera vídeos com dados
+  // suficientes carregados (readyState >= 2 = HAVE_CURRENT_DATA), senão o
+  // frame sai preto; e falha silenciosamente se o vídeo tiver proteção
+  // CORS/DRM, que "contamina" o canvas e faz toDataURL lançar um erro.
+  const video = [...document.querySelectorAll("video")].find(
+    (v) => v.readyState >= 2 && v.videoWidth,
+  );
+  if (!video) {
+    console.warn("[Pinicon] nenhum <video> com frame carregado encontrado na página.");
+    return "";
+  }
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/png");
+  } catch (error) {
+    // O caso mais comum aqui é "tainted canvas": o navegador recusa exportar
+    // pixels de um vídeo carregado sem permissão CORS explícita do CDN que o
+    // serve — e a maioria dos CDNs de vídeo (TikTok incluso) não dá essa
+    // permissão. Isso NÃO depende de qual frame foi escolhido: qualquer
+    // captura desse mesmo elemento de vídeo, em qualquer instante, esbarra no
+    // mesmo bloqueio — por isso deixar o usuário escolher o frame manualmente
+    // não resolveria esse erro específico.
+    console.warn("[Pinicon] falha ao capturar frame do vídeo:", error.message);
+    return "";
+  }
+}
+
+export async function scrapeActiveTabImage(tabId) {
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: scrapeActiveImage,
+    });
+    return result || "";
+  } catch {
+    return "";
+  }
+}

@@ -70,15 +70,29 @@ model Collection {
   description String @default("")
   color String @default("#b9ee78")
   isPublic Boolean @default(false)
-  shape String @default("circle")
+  shape String @default("rounded")
+  behavior String @default("expansive")
   createdAt DateTime @default(now())
   bookmarks Bookmark[]
+  groups BookmarkGroup[]
   @@index([ownerId])
+}
+model BookmarkGroup {
+  id String @id @default(uuid())
+  collectionId String
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  name String @db.VarChar(120)
+  color String @default("#b9ee78")
+  createdAt DateTime @default(now())
+  bookmarks Bookmark[]
+  @@index([collectionId])
 }
 model Bookmark {
   id String @id @default(uuid())
   collectionId String
   collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  groupId String?
+  group BookmarkGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
   name String @db.VarChar(120)
   url String
   description String @default("")
@@ -87,4 +101,5 @@ model Bookmark {
   isPublic Boolean @default(false)
   createdAt DateTime @default(now())
   @@index([collectionId])
+  @@index([groupId])
 }

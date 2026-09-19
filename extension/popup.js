@@ -4,6 +4,8 @@ import {
   fetchMe,
   fetchCollections,
   fetchMetadata,
+  resolveIcon,
+  scrapeActiveTabImage,
   createBookmark,
   DEFAULT_COLOR,
 } from "./shared.js";
@@ -52,6 +54,18 @@ async function loadPreview(baseUrl) {
     els.previewUnavailable.classList.remove("hidden");
     return;
   }
+  // Reforço pra sites que bloqueiam o fetch do servidor (TikTok, Instagram, ...)
+  // e por isso só têm og:image genérico ou nenhum: lê a imagem direto da aba já
+  // carregada no navegador e, se achar algo, troca a do /api/metadata por ela.
+  // Falha aqui não deve travar o preview — o favicon do servidor já é um resultado
+  // válido por si só.
+  try {
+    const liveImage = await scrapeActiveTabImage(tab.id);
+    if (liveImage) {
+      const resolved = await resolveIcon(baseUrl, liveImage, "cover");
+      if (resolved.favicon) scraped = { ...scraped, ...resolved };
+    }
+  } catch {}
   els.previewIcon.src = scraped.favicon || "icons/icon32.png";
   els.previewIcon.onerror = () => {
     els.previewIcon.onerror = null;

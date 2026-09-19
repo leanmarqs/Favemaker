@@ -11,6 +11,7 @@ export interface Account {
 export interface Bookmark {
   id: string;
   collectionId: string;
+  groupId?: string | null;
   name: string;
   url: string;
   description: string;
@@ -19,6 +20,13 @@ export interface Bookmark {
   isPublic: boolean;
   createdAt?: string;
 }
+export interface BookmarkGroup {
+  id: string;
+  collectionId: string;
+  name: string;
+  color: string;
+  bookmarks: Bookmark[];
+}
 export interface Collection {
   id: string;
   name: string;
@@ -26,5 +34,7 @@ export interface Collection {
   color: string;
   isPublic: boolean;
   shape?: string;
+  behavior?: string;
   bookmarks: Bookmark[];
+  groups: BookmarkGroup[];
 }

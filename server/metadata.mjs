@@ -6,6 +6,30 @@ import { load } from "cheerio";
 import sharp from "sharp";
 import { decodeIco, isIco } from "icojs";
 
+// Nunca fazem parte da identidade do conteúdo (que mora inteira no path:
+// /video/ID, /status/ID, /p/CODIGO, /permalink/ID, ...) — só rastreamento de
+// origem que cada rede social anexa de um jeito diferente dependendo de como
+// o link foi copiado (barra de endereço vs. botão "Compartilhar"). Remover
+// isso deixa o favorito salvo com a URL limpa e elimina essa como possível
+// causa de variação entre as duas formas de pegar o mesmo link.
+const TRACKING_PARAMS = new Set([
+  "is_from_webapp",
+  "sender_device",
+  "s",
+  "t",
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "utm_term",
+  "utm_content",
+  "igshid",
+  "igsh",
+  "stkn",
+  "fbclid",
+  "ref",
+  "ref_src",
+  "mibextid",
+]);
 export function normalizeUrl(value) {
   const url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
   if (
@@ -15,6 +39,9 @@ export function normalizeUrl(value) {
     !url.hostname.includes(".")
   )
     throw new Error("Informe uma URL pública válida.");
+  for (const key of [...url.searchParams.keys()])
+    if (TRACKING_PARAMS.has(key) || key.startsWith("__"))
+      url.searchParams.delete(key);
   return url.href;
 }
 export function isPublicAddress(address) {
@@ -23,31 +50,29 @@ export function isPublicAddress(address) {
     parsed = parsed.toIPv4Address();
   return parsed.range() === "unicast";
 }
-// Resolve e fixa o IP em cada requisição, inclusive após redirecionamentos.
-export async function safeFetch(value, redirects = 0) {
-  if (redirects > 3) throw new Error("Muitos redirecionamentos.");
-  const url = new URL(value);
-  if (
-    !["http:", "https:"].includes(url.protocol) ||
-    url.username ||
-    url.password ||
-    (url.port && !["80", "443"].includes(url.port))
-  )
-    throw new Error("Endereço não permitido.");
-  const addresses = await lookup(url.hostname.replace(/^\[|\]$/g, ""), {
-    all: true,
-  });
-  if (!addresses.length || addresses.some((a) => !isPublicAddress(a.address)))
-    throw new Error("Endereço não permitido.");
-  const result = await new Promise((resolve, reject) => {
+const DEFAULT_UA = "Pinicon/1.0";
+// Vários sites (TikTok, Instagram, ...) servem a página praticamente vazia pra
+// um fetch de servidor genérico — o conteúdo real só existe depois de JS rodar
+// no navegador — mas reconhecem esse User-Agent de crawler de preview social
+// conhecido e respondem com og:title/og:image/og:description completos,
+// porque é assim que eles fazem a própria prévia funcionar no WhatsApp/
+// Facebook/etc. Não é o padrão: alguns sites (ex.: Magazine Luiza) bloqueiam
+// esse UA especificamente mesmo em assets estáticos que liberam pra um UA
+// genérico — por isso só é usado como segunda tentativa (ver fetchDocument).
+const CRAWLER_UA =
+  "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)";
+// Faz a requisição de fato fixada num único IP já validado (proteção contra
+// DNS rebinding: nunca deixa o socket resolver o hostname de novo).
+function fetchAddress(url, address, timeoutMs, userAgent) {
+  return new Promise((resolve, reject) => {
     const req = (url.protocol === "https:" ? https : http).get(
       url,
       {
-        headers: { "User-Agent": "Pinicon/1.0", "Accept-Encoding": "identity" },
+        headers: { "User-Agent": userAgent, "Accept-Encoding": "identity" },
         lookup: (_host, options, callback) =>
           options.all
-            ? callback(null, [addresses[0]])
-            : callback(null, addresses[0].address, addresses[0].family),
+            ? callback(null, [address])
+            : callback(null, address.address, address.family),
       },
       (res) => {
         const chunks = [];
@@ -71,13 +96,54 @@ export async function safeFetch(value, redirects = 0) {
     );
     const timer = setTimeout(
       () => req.destroy(new Error("Tempo de consulta esgotado.")),
-      4500,
+      timeoutMs,
     );
     req.on("close", () => clearTimeout(timer));
     req.on("error", reject);
   });
+}
+// Resolve e fixa o IP em cada requisição, inclusive após redirecionamentos.
+export async function safeFetch(value, redirects = 0, userAgent = DEFAULT_UA) {
+  if (redirects > 3) throw new Error("Muitos redirecionamentos.");
+  const url = new URL(value);
+  if (
+    !["http:", "https:"].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    (url.port && !["80", "443"].includes(url.port))
+  )
+    throw new Error("Endereço não permitido.");
+  const addresses = await lookup(url.hostname.replace(/^\[|\]$/g, ""), {
+    all: true,
+  });
+  if (!addresses.length || addresses.some((a) => !isPublicAddress(a.address)))
+    throw new Error("Endereço não permitido.");
+  // IPv4 primeiro: em vários ambientes de hospedagem o registro AAAA existe no
+  // DNS mas a rota IPv6 não é alcançável de fato — sem esse fallback, um site
+  // com os dois tipos de endereço trava até estourar o timeout preso nesse
+  // primeiro IP quebrado, mesmo com o IPv4 respondendo instantaneamente (foi
+  // exatamente isso que fez o favicon da Magazine Luiza não ser encontrado).
+  const ordered = [...addresses].sort((a, b) => a.family - b.family).slice(0, 3);
+  let result;
+  for (let i = 0; i < ordered.length; i++) {
+    try {
+      result = await fetchAddress(
+        url,
+        ordered[i],
+        i === ordered.length - 1 ? 4500 : 2500,
+        userAgent,
+      );
+      break;
+    } catch (error) {
+      if (i === ordered.length - 1) throw error;
+    }
+  }
   if (result.status >= 300 && result.status < 400 && result.headers.location)
-    return safeFetch(new URL(result.headers.location, url).href, redirects + 1);
+    return safeFetch(
+      new URL(result.headers.location, url).href,
+      redirects + 1,
+      userAgent,
+    );
   if (result.status !== 200)
     throw new Error("Não foi possível consultar o site.");
   return result;
@@ -95,10 +161,14 @@ export async function imageData(buffer, { crop = "inside" } = {}) {
   // encolher mantendo a proporção (sobraria fundo/letterbox), recorta um quadrado
   // central com a estratégia "attention" do sharp, que tenta manter a região mais
   // relevante da imagem (bordas costumam ter só texto/gradiente decorativo).
+  // 256px (não 128) porque o card de prévia grande mostra essa mesma imagem
+  // numa área de ~220px de largura — em tela retina isso pede quase o dobro
+  // disso em pixels reais, e sites que já oferecem ícone grande (apple-touch-icon,
+  // manifest) não devem ser reduzidos à toa antes de guardar.
   const png = await sharp(buffer, { limitInputPixels: 16000000 })
     .resize(
-      128,
-      128,
+      256,
+      256,
       crop === "cover"
         ? { fit: "cover", position: sharp.strategy.attention }
         : { fit: "inside", withoutEnlargement: true },
@@ -126,6 +196,26 @@ export async function resolveImage(value, options) {
   }
   return imageData((await safeFetch(value)).buffer, options);
 }
+// Primeira tentativa com o UA genérico (o mesmo usado pra favicon/manifest).
+// Checa especificamente og:title (não a <title> comum): sites como o TikTok
+// mandam uma página cheia de conteúdo pra qualquer UA, só que sem preencher o
+// og:title/og:image do vídeo específico — esses só aparecem pra um crawler de
+// preview social conhecido. Só troca pelo resultado da segunda tentativa se
+// ela de fato achar um og:title (senão o site simplesmente não usa Open Graph,
+// e o resultado original — que pode ter vindo com mais dados que o do crawler
+// em sites que servem menos conteúdo pra bots — é mantido).
+async function fetchDocument(url) {
+  const page = await safeFetch(url);
+  const $ = load(page.buffer.toString("utf8"));
+  if ($('meta[property="og:title"]').attr("content")) return { page, $ };
+  try {
+    const retried = await safeFetch(url, 0, CRAWLER_UA);
+    const $retried = load(retried.buffer.toString("utf8"));
+    if ($retried('meta[property="og:title"]').attr("content"))
+      return { page: retried, $: $retried };
+  } catch {}
+  return { page, $ };
+}
 export async function metadata(value) {
   const url = normalizeUrl(value);
   const hostname = new URL(url).hostname.replace(/^www\./, "");
@@ -134,8 +224,7 @@ export async function metadata(value) {
     contentImage = "";
   const candidates = [];
   try {
-    const page = await safeFetch(url);
-    const $ = load(page.buffer.toString("utf8"));
+    const { page, $ } = await fetchDocument(url);
     title =
       $('meta[property="og:title"]').attr("content") ||
       $("title").text().trim() ||
@@ -165,13 +254,20 @@ export async function metadata(value) {
     }
     $("link[rel]").each((_, el) => {
       const rel = $(el).attr("rel") || "";
+      const href = $(el).attr("href") || "";
       if (/(^|\s)(icon|apple-touch-icon|shortcut)(\s|$)/i.test(rel)) {
         try {
+          // SVG é vetorial: fica nítido em qualquer tamanho que a gente peça pro
+          // sharp renderizar, então sempre vence os candidatos raster (PNG/ICO)
+          // na ordenação por "size", mesmo quando o site declara sizes="any".
+          const isSvg =
+            $(el).attr("type") === "image/svg+xml" || /\.svg(\?|$)/i.test(href);
           candidates.push({
-            url: new URL($(el).attr("href"), base).href,
-            size:
-              parseInt($(el).attr("sizes")) ||
-              (rel.includes("apple") ? 180 : 32),
+            url: new URL(href, base).href,
+            size: isSvg
+              ? Infinity
+              : parseInt($(el).attr("sizes")) ||
+                (rel.includes("apple") ? 180 : 32),
           });
         } catch {}
       }

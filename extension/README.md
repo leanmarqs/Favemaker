@@ -15,10 +15,13 @@ sem precisar copiar link e colar no app.
 ## Como usar
 
 - **Clique no ícone da extensão** → mostra um preview (ícone, nome, descrição)
-  da página atual, editável, com a coleção → **Salvar no Pinicon**. O preview
-  vem do mesmo `POST /api/metadata` usado pela barra de busca do site e pelo
-  menu de contexto (ver abaixo) — inclusive já prioriza a imagem do conteúdo
-  específico (`og:image`) sobre o favicon do site quando a página não é a home.
+  da página atual, editável, com a coleção → **Salvar no Pinicon**. Nome e
+  descrição vêm do mesmo `POST /api/metadata` usado pela barra de busca do site
+  e pelo menu de contexto (ver abaixo) — inclusive já prioriza a imagem do
+  conteúdo específico (`og:image`) sobre o favicon do site quando a página não
+  é a home. A imagem ainda passa por um segundo reforço, lida direto da aba já
+  aberta no navegador (ver "Como funciona"), pra funcionar também em sites que
+  bloqueiam esse fetch quando ele vem do servidor.
 - **Botão direito em cima de um link (não em qualquer espaço da página)** →
   **Salvar no Pinicon** → salva direto na coleção configurada no popup
   (a última escolhida ali), sem abrir aba nem modal — só uma notificação do
@@ -32,15 +35,28 @@ salvar silenciosamente errado.
 
 ## Como funciona (sem precisar reescrever o backend)
 
-- Nome, descrição e imagem vêm sempre do mesmo endpoint usado pela barra de
-  busca do site (`POST /api/metadata`), que busca a própria página e decide a
-  melhor imagem — priorizando o `og:image`/`twitter:image` do conteúdo
-  específico sobre o favicon do site quando a URL não é a home genérica (ver
-  `server/metadata.mjs`). A extensão não lê mais o DOM da aba diretamente;
-  isso significa que sites que bloqueiam requisições de servidor sem login/JS
-  (algumas redes sociais) podem falhar ao capturar — nesse caso o popup mostra
+- Nome e descrição vêm do mesmo endpoint usado pela barra de busca do site
+  (`POST /api/metadata`), que busca a própria página e decide a melhor imagem
+  — priorizando o `og:image`/`twitter:image` do conteúdo específico sobre o
+  favicon do site quando a URL não é a home genérica (ver `server/metadata.mjs`).
+  Sites que bloqueiam esse fetch de servidor sem login/JS (algumas redes
+  sociais, ex: TikTok) podem não ter nome/descrição — nesse caso o popup mostra
   "prévia indisponível" (sem opção de salvar por ali) e o menu de contexto
   notifica o erro.
+- **Só no popup**, depois desse fetch, a imagem ganha um reforço: a extensão lê
+  `og:image`/`twitter:image`/o `poster` de um `<video>` em reprodução direto do
+  DOM da aba já carregada (`chrome.scripting.executeScript`, função
+  `scrapeActiveImage` em `shared.js`) e, se achar algo, troca a imagem do
+  `/api/metadata` por essa — funciona mesmo em sites que bloqueiam o fetch do
+  servidor, porque o navegador já renderizou a página de verdade. Essa imagem
+  é resolvida com recorte quadrado centralizado (`crop: "cover"`, o mesmo usado
+  pelo servidor para thumbnails de conteúdo), melhor pra capturas de vídeo/post
+  do que o encolhimento simples usado em favicons. Se nem isso existir (nem
+  poster, nem og:image/twitter:image), como último recurso ela desenha o frame
+  atual de um `<video>` em reprodução num `<canvas>` e usa isso como imagem —
+  só funciona se o vídeo já tiver dados carregados (senão sai um frame preto) e
+  não tiver proteção CORS/DRM (nesse caso falha silenciosamente e mantém o que
+  já veio do `/api/metadata`).
 - Ela então chama a API que já existe: `GET /api/collections` e
   `POST /api/bookmarks` — o próprio servidor baixa e converte a imagem
   (`resolveImage`), igual já faz para o avatar.

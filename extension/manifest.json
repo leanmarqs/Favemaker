@@ -22,7 +22,7 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["contextMenus", "activeTab", "storage", "cookies", "notifications"],
+  "permissions": ["contextMenus", "activeTab", "scripting", "storage", "cookies", "notifications"],
   "host_permissions": [
     "http://localhost:3000/*",
     "http://localhost:3001/*",
