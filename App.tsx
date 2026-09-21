@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   ArrowDownAZ,
+  ArrowUpAZ,
   ArrowUpRight,
   Bookmark as BookmarkIcon,
   Check,
@@ -10,6 +11,7 @@ import {
   ChevronUp,
   Folder,
   Globe2,
+  GripVertical,
   Heart,
   Link2,
   Lock,
@@ -80,6 +82,12 @@ type Draft = Omit<typeof blank, "shape" | "behavior"> & {
   id?: string;
   shape: string;
   behavior: string;
+  // Só presente quando o favorito está sendo criado a partir do "+" de uma
+  // seção específica (ver CollectionRow) — o servidor só mexe no grupo do
+  // favorito quando essa chave é enviada, então o formulário normal de edição
+  // (que nunca define isso) não corre o risco de tirar um favorito do grupo
+  // sem querer.
+  groupId?: string | null;
 };
 type FilterKey =
   | "liked"
@@ -184,10 +192,12 @@ function Sphere({
 function GroupTile({
   group,
   shape = "circle",
+  expanded,
   onOpen,
 }: {
   group: Pick<BookmarkGroup, "id" | "name" | "color" | "bookmarks">;
   shape?: string;
+  expanded?: boolean;
   onOpen: () => void;
 }) {
   const borderRadius =
@@ -197,9 +207,10 @@ function GroupTile({
   return (
     <button
       type="button"
-      className={`sphere sphere-${shape} group-tile`}
+      className={`sphere sphere-${shape} group-tile ${expanded ? "is-expanded" : ""}`}
       style={{ "--orb": group.color, borderRadius } as React.CSSProperties}
       aria-label={`Abrir grupo ${group.name}`}
+      aria-pressed={expanded}
       title={group.name}
       onClick={onOpen}
     >
@@ -237,8 +248,11 @@ function CollectionRow({
   toggleBehavior,
   createGroup,
   moveToGroup,
+  reorderBookmarks,
   renameGroup,
   deleteGroup,
+  sectionsBulkAction,
+  dragHandle,
 }: {
   collection: Collection;
   readOnly: boolean;
@@ -247,7 +261,7 @@ function CollectionRow({
   bookmarkedIds: string[];
   edit: () => void;
   remove: () => void;
-  add: () => void;
+  add: (groupId?: string) => void;
   editBookmark: (bookmark: Bookmark) => void;
   removeBookmark: (bookmark: Bookmark) => void;
   openBookmark: (bookmark: Bookmark) => void;
@@ -261,8 +275,38 @@ function CollectionRow({
     bookmarkIds: string[],
   ) => Promise<BookmarkGroup | null>;
   moveToGroup: (bookmarkId: string, groupId: string | null) => Promise<void>;
-  renameGroup: (groupId: string, name: string, color: string) => Promise<void>;
+  reorderBookmarks: (
+    collectionId: string,
+    groupId: string | null,
+    orderedIds: string[],
+  ) => Promise<void>;
+  renameGroup: (
+    groupId: string,
+    data: {
+      name: string;
+      color: string;
+      description: string;
+      showName: boolean;
+      shape: string | null;
+    },
+  ) => Promise<void>;
   deleteGroup: (groupId: string) => Promise<void>;
+  // Comando disparado pela barra de ações em massa (ver App): "collapse"
+  // decide se recolhe (true) ou expande (false) TODAS as próprias seções;
+  // "token" muda a cada clique (mesmo repetindo a mesma ação) só pra sempre
+  // disparar o efeito abaixo, já que collapsedSections é estado local daqui.
+  sectionsBulkAction: { collapse: boolean; token: number } | null;
+  // Arrastar pelo "grip" na barra de ferramentas da coleção pra reordenar a
+  // lista "Suas coleções" — ver handleCollectionDrop no App.
+  dragHandle: {
+    dragging: boolean;
+    dragOver: boolean;
+    onDragStart: () => void;
+    onDragOver: () => void;
+    onDragLeave: () => void;
+    onDrop: () => void;
+    onDragEnd: () => void;
+  };
 }) {
   const [page, setPage] = useState(0);
   const [direction, setDirection] = useState<"forward" | "backward">("forward");
@@ -274,29 +318,91 @@ function CollectionRow({
   // expandida/recolhida do jeito que o usuário deixou mesmo depois de sair e
   // entrar de novo no site, em vez de sempre remontar recolhida.
   const isExpanded = collection.behavior === "expansive";
+  // Ordenação, recolher/expandir: por seção (chave = id do grupo), não
+  // persistido no servidor — cada seção começa aberta e na ordem de criação.
+  const [sectionSort, setSectionSort] = useState<
+    Record<string, "asc" | "desc">
+  >({});
+  const [collapsedSections, setCollapsedSections] = useState<
+    Record<string, boolean>
+  >({});
+  // Reage ao comando de "expandir/recolher todas" disparado pela barra de
+  // ações em massa (ver App) — ignora o primeiro render (token null) pra não
+  // recolher/expandir nada sem o usuário ter clicado em nada ainda.
+  useEffect(() => {
+    if (!sectionsBulkAction) return;
+    if (sectionsBulkAction.collapse) {
+      const next: Record<string, boolean> = {};
+      for (const g of collection.groups)
+        if (g.display === "section") next[g.id] = true;
+      setCollapsedSections(next);
+    } else {
+      setCollapsedSections({});
+    }
+  }, [sectionsBulkAction]);
+  // containerKey identifica de onde veio o hover — "main" (pill principal) ou
+  // o id de uma seção — pra cada container só desenhar a barra/prévia quando
+  // ela é a dona do item passado o mouse (ver renderFavoriteOverlays), já que
+  // as coordenadas x/y são sempre relativas ao container de origem.
   const [bookmarkToolbar, setBookmarkToolbar] = useState<{
     bookmark: Bookmark;
+    containerKey: string;
     x?: number;
     y?: number;
   } | null>(null);
   const [previewCard, setPreviewCard] = useState<{
     bookmark: Bookmark;
+    containerKey: string;
     x?: number;
     y?: number;
   } | null>(null);
   const [previewCardLeaving, setPreviewCardLeaving] = useState(false);
-  // Arrastar um ícone sobre outro (só com o lápis ligado) cria/adiciona a um
-  // grupo — estado local porque precisa re-renderizar pra destacar o alvo.
+  // Arrastar um ícone (só com o lápis ligado) tem três desfechos possíveis,
+  // decididos pela posição horizontal do cursor sobre o ícone-alvo: soltar no
+  // terço central "sobre" o ícone agrupa os dois (dragOverZone "center");
+  // soltar no terço da esquerda/direita reordena a lista sem agrupar
+  // ("before"/"after"); soltar dentro do corpo de uma seção (sem alvo
+  // específico) move o ícone pra dentro dela, no fim da lista.
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [dragOverZone, setDragOverZone] = useState<
+    "before" | "center" | "after" | null
+  >(null);
+  const [dragOverSectionId, setDragOverSectionId] = useState<string | null>(
+    null,
+  );
   const [openGroup, setOpenGroup] = useState<BookmarkGroup | null>(null);
+  // Clicar num "tile" sem o lápis ligado não abre modal nenhum — expande um
+  // painel ancorado bem onde o ícone está (mesma técnica do cartão de prévia:
+  // x/y relativos ao ".favorite-anchor"), mostrando os favoritos de dentro
+  // dele prontos pra usar. Guardamos só o id (não o grupo inteiro) pra sempre
+  // refletir a versão mais atual dele, igual openGroupLive.
+  const [expandedGroup, setExpandedGroup] = useState<{
+    groupId: string;
+    x?: number;
+    y?: number;
+  } | null>(null);
   const pageTransitionTimer = useRef<number | null>(null);
   const bookmarkToolbarTimer = useRef<number | null>(null);
   const previewCardTimer = useRef<number | null>(null);
   const previewCardExitTimer = useRef<number | null>(null);
+  const groupExpandTimer = useRef<number | null>(null);
+  const groupExpandExitTimer = useRef<number | null>(null);
   type GridItem =
     | { kind: "bookmark"; id: string; sortKey: string; bookmark: Bookmark }
     | { kind: "group"; id: string; sortKey: string; group: BookmarkGroup };
+  // Tile vazio (0 favoritos) some — ninguém cria um "tile" sem conteúdo, e um
+  // grupo assim só sobra por perder favoritos um a um. Seção vazia, por outro
+  // lado, é um estado válido (nasce vazia, do editor da coleção) e precisa
+  // continuar visível pro dono poder adicionar favoritos a ela pelo "+" da
+  // própria seção — só é escondida no perfil público (readOnly) quando não
+  // sobra nenhum favorito visível lá dentro.
+  const tileGroups = collection.groups.filter(
+    (g) => g.display !== "section" && g.bookmarks.length,
+  );
+  const sectionGroups = collection.groups.filter(
+    (g) => g.display === "section" && (g.bookmarks.length || !readOnly),
+  );
   const items: GridItem[] = [
     ...collection.bookmarks.map((b) => ({
       kind: "bookmark" as const,
@@ -304,17 +410,19 @@ function CollectionRow({
       sortKey: b.name,
       bookmark: b,
     })),
-    // Grupo sem nenhum favorito visível acontece no perfil público quando todo
-    // mundo dentro é privado — esconder em vez de mostrar uma moldura vazia.
-    ...collection.groups
-      .filter((g) => g.bookmarks.length)
-      .map((g) => ({
-        kind: "group" as const,
-        id: g.id,
-        sortKey: g.name,
-        group: g,
-      })),
+    ...tileGroups.map((g) => ({
+      kind: "group" as const,
+      id: g.id,
+      sortKey: g.name,
+      group: g,
+    })),
   ];
+  // Um "tile" (ícone de grupo) não tem posição própria na lista de favoritos
+  // — arrastá-lo sobre outro ícone só pode agrupar, nunca reordenar, mesmo
+  // soltando numa ponta (que noutro caso significaria "entre dois ícones").
+  const draggedIsTile = items.some(
+    (i) => i.id === draggedId && i.kind === "group",
+  );
   // Contagem de favoritos de verdade (inclusive os de dentro de grupos) é
   // diferente da contagem de "slots" na grade (um grupo conta como 1 slot).
   const totalBookmarks =
@@ -341,6 +449,9 @@ function CollectionRow({
         window.clearTimeout(previewCardTimer.current);
       if (previewCardExitTimer.current)
         window.clearTimeout(previewCardExitTimer.current);
+      if (groupExpandTimer.current) window.clearTimeout(groupExpandTimer.current);
+      if (groupExpandExitTimer.current)
+        window.clearTimeout(groupExpandExitTimer.current);
     },
     [],
   );
@@ -371,8 +482,32 @@ function CollectionRow({
     setPreviewCard(null);
     setPreviewCardLeaving(false);
   }, [toolbarsEnabled]);
+  // Ligar o lápis muda o clique no tile pra abrir o modal de edição em vez de
+  // passar a depender do hover — fecha o painel expandido (e cancela timers
+  // pendentes) pra não deixar os dois abertos ao mesmo tempo.
+  useEffect(() => {
+    if (!toolbarsEnabled) return;
+    if (groupExpandTimer.current) window.clearTimeout(groupExpandTimer.current);
+    if (groupExpandExitTimer.current)
+      window.clearTimeout(groupExpandExitTimer.current);
+    setExpandedGroup(null);
+  }, [toolbarsEnabled]);
+  // Rede de segurança pra fechar em cliques que não passam por um mouseleave
+  // (ex: clicar num link dentro da própria página sem mover o mouse antes).
+  useEffect(() => {
+    if (!expandedGroup) return;
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as HTMLElement;
+      if (target.closest(".group-expand-panel") || target.closest(".group-tile"))
+        return;
+      setExpandedGroup(null);
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [expandedGroup]);
   const scheduleBookmarkToolbar = (next: {
     bookmark: Bookmark;
+    containerKey: string;
     x?: number;
     y?: number;
   }) => {
@@ -402,6 +537,7 @@ function CollectionRow({
   // da barra de edição — que continua sendo o comportamento com o lápis ligado.
   const schedulePreviewCard = (next: {
     bookmark: Bookmark;
+    containerKey: string;
     x?: number;
     y?: number;
   }) => {
@@ -434,24 +570,133 @@ function CollectionRow({
       window.clearTimeout(previewCardExitTimer.current);
     setPreviewCardLeaving(false);
   };
-  // Soltar em cima de outro favorito cria um grupo novo com os dois; soltar em
-  // cima de um grupo já existente só adiciona o item arrastado a ele. Soltar
-  // em espaço vazio (sem alvo) não faz nada — reordenar livremente não é
-  // suportado, só "largar em cima de outro ícone" aciona o agrupamento.
-  function handleDrop(target: GridItem) {
+  // Mesma ideia do cartão de prévia (cursor parado sobre o ícone por um
+  // instante, não clique) — só que pra um "tile", em vez do cartão, mostra os
+  // favoritos de dentro dele (ver expandedGroup). Só faz sentido sem o lápis
+  // ligado: com ele, clicar no tile abre o modal de edição normalmente.
+  const scheduleGroupExpand = (next: {
+    groupId: string;
+    x?: number;
+    y?: number;
+  }) => {
+    if (toolbarsEnabled) return;
+    if (groupExpandTimer.current) window.clearTimeout(groupExpandTimer.current);
+    if (groupExpandExitTimer.current)
+      window.clearTimeout(groupExpandExitTimer.current);
+    groupExpandTimer.current = window.setTimeout(
+      () => setExpandedGroup(next),
+      250,
+    );
+  };
+  const deferGroupExpandClear = () => {
+    if (groupExpandTimer.current) window.clearTimeout(groupExpandTimer.current);
+    groupExpandExitTimer.current = window.setTimeout(
+      () => setExpandedGroup(null),
+      250,
+    );
+  };
+  const keepGroupExpandVisible = () => {
+    if (groupExpandTimer.current) window.clearTimeout(groupExpandTimer.current);
+    if (groupExpandExitTimer.current)
+      window.clearTimeout(groupExpandExitTimer.current);
+  };
+  // Em qual terço horizontal do ícone-alvo o cursor está: os terços das
+  // pontas reordenam a lista (não agrupam), o terço central agrupa — é essa
+  // posição que distingue "soltar sobre" de "soltar entre dois ícones".
+  function dropZone(
+    event: React.DragEvent<HTMLDivElement>,
+  ): "before" | "center" | "after" {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = (event.clientX - rect.left) / rect.width;
+    if (ratio < 1 / 3) return "before";
+    if (ratio > 2 / 3) return "after";
+    return "center";
+  }
+  // Ids (na ordem exibida no momento) da lista de favoritos "soltos" da
+  // coleção (containerGroupId null) ou dos favoritos de uma seção — a mesma
+  // lista que o servidor grava como `order` ao reordenar/mover.
+  function bookmarkIdsInContainer(containerGroupId: string | null): string[] {
+    if (containerGroupId === null) {
+      const list = sortDirection
+        ? [...collection.bookmarks].sort((a, b) =>
+            sortDirection === "asc"
+              ? a.name.localeCompare(b.name, "pt-BR")
+              : b.name.localeCompare(a.name, "pt-BR"),
+          )
+        : collection.bookmarks;
+      return list.map((b) => b.id);
+    }
+    const section = collection.groups.find((g) => g.id === containerGroupId);
+    if (!section) return [];
+    const direction = sectionSort[containerGroupId];
+    const list = direction
+      ? [...section.bookmarks].sort((a, b) =>
+          direction === "asc"
+            ? a.name.localeCompare(b.name, "pt-BR")
+            : b.name.localeCompare(a.name, "pt-BR"),
+        )
+      : section.bookmarks;
+    return list.map((b) => b.id);
+  }
+  function insertedOrder(
+    containerGroupId: string | null,
+    sourceId: string,
+    targetId: string,
+    edge: "before" | "after",
+  ): string[] {
+    const ids = bookmarkIdsInContainer(containerGroupId).filter(
+      (id) => id !== sourceId,
+    );
+    const targetIndex = ids.indexOf(targetId);
+    const insertAt = edge === "before" ? targetIndex : targetIndex + 1;
+    ids.splice(insertAt, 0, sourceId);
+    return ids;
+  }
+  // Soltar sobre o terço central de outro ícone cria (ou adiciona a) um grupo
+  // — igual antes. Soltar num dos terços das pontas reposiciona o favorito
+  // arrastado naquele ponto da lista do container de chegada (a coleção ou
+  // uma seção), sem agrupar — funciona mesmo vindo de outro container.
+  function handleFavoriteDrop(
+    target: { kind: "bookmark" | "group"; id: string },
+    containerGroupId: string | null,
+  ) {
+    const sourceId = draggedId;
+    const zone = dragOverZone;
+    setDraggedId(null);
+    setDragOverId(null);
+    setDragOverZone(null);
+    setDragOverSectionId(null);
+    if (!sourceId || sourceId === target.id) return;
+    if (target.kind === "group" || zone === "center" || !zone) {
+      if (target.kind === "group") {
+        void moveToGroup(sourceId, target.id);
+      } else {
+        void createGroup(collection.id, [sourceId, target.id]).then(
+          (created) => {
+            if (created) setOpenGroup(created);
+          },
+        );
+      }
+      return;
+    }
+    const orderedIds = insertedOrder(containerGroupId, sourceId, target.id, zone);
+    void reorderBookmarks(collection.id, containerGroupId, orderedIds);
+  }
+  // Soltar num espaço vazio dentro do "corpo" de uma seção (sem mirar num
+  // ícone específico) move o favorito arrastado pra dentro dela, no fim da
+  // lista — cobre tanto uma seção ainda vazia quanto soltar depois do último
+  // ícone visível.
+  function handleSectionContainerDrop(containerGroupId: string) {
     const sourceId = draggedId;
     setDraggedId(null);
     setDragOverId(null);
-    if (!sourceId || sourceId === target.id) return;
-    if (target.kind === "group") {
-      void moveToGroup(sourceId, target.id);
-    } else {
-      void createGroup(collection.id, [sourceId, target.id]).then(
-        (created) => {
-          if (created) setOpenGroup(created);
-        },
-      );
-    }
+    setDragOverZone(null);
+    setDragOverSectionId(null);
+    if (!sourceId) return;
+    const ids = bookmarkIdsInContainer(containerGroupId).filter(
+      (id) => id !== sourceId,
+    );
+    void reorderBookmarks(collection.id, containerGroupId, [...ids, sourceId]);
   }
   // Sempre a versão mais atual do grupo aberto (não o objeto capturado no
   // momento do clique) — assim a lista dentro do popover reflete remoções/
@@ -459,15 +704,37 @@ function CollectionRow({
   const openGroupLive = openGroup
     ? collection.groups.find((g) => g.id === openGroup.id) || null
     : null;
+  const expandedGroupLive = expandedGroup
+    ? collection.groups.find((g) => g.id === expandedGroup.groupId) || null
+    : null;
+  // Clicar num "tile" (ícone de grupo) com o lápis ligado abre o modal de
+  // edição (nome, cor, remover item, excluir grupo); sem o lápis, só expande
+  // o painel de favoritos pra usar (ver expandedGroup) — nunca os dois ao
+  // mesmo tempo.
+  const canEditGroup = !readOnly && toolbarsEnabled;
   const groupDialog = useRef<HTMLDialogElement>(null);
   const [groupName, setGroupName] = useState("");
   const [groupColor, setGroupColor] = useState("");
+  const [groupDescription, setGroupDescription] = useState("");
+  const [groupShowName, setGroupShowName] = useState(false);
+  const [groupShape, setGroupShape] = useState<string | null>(null);
+  const [groupBusy, setGroupBusy] = useState(false);
   useEffect(() => {
+    // Depende só de "openGroup" (não do id, nem de openGroupLive): os campos
+    // agora só salvam quando "Salvar" é clicado, então reabrir a MESMA seção
+    // depois de cancelar precisa mesmo re-sincronizar com o servidor — senão
+    // a edição descartada reaparece, como se tivesse sido salva. Não pode
+    // depender de openGroupLive porque essa referência muda a cada reload dos
+    // dados (mesmo sem o usuário reabrir nada), o que resetaria uma edição
+    // ainda não salva enquanto o modal está aberto.
     if (openGroupLive) {
       setGroupName(openGroupLive.name);
       setGroupColor(openGroupLive.color);
+      setGroupDescription(openGroupLive.description);
+      setGroupShowName(openGroupLive.showName);
+      setGroupShape(openGroupLive.shape || null);
     }
-  }, [openGroupLive?.id]);
+  }, [openGroup]);
   useEffect(() => {
     if (openGroup && !groupDialog.current?.open) groupDialog.current?.showModal();
     else if (!openGroup && groupDialog.current?.open) groupDialog.current.close();
@@ -477,106 +744,62 @@ function CollectionRow({
     // estava aberto — fecha em vez de mostrar uma lista vazia órfã.
     if (openGroup && !openGroupLive) setOpenGroup(null);
   }, [openGroup, openGroupLive]);
-  return (
-    <>
-    <article
-      className={`collection ${bookmarkToolbar || toolbarsEnabled || previewCard ? "has-visible-toolbar" : ""} ${toolbarsEnabled ? "toolbar-open" : ""}`}
-    >
-      <div className="collection-heading">
-        <div className="collection-label">
-          <span
-            className="collection-dot"
-            style={{ background: collection.color }}
-          />
-          <h3>{collection.name}</h3>
-          <span className="count">{totalBookmarks}</span>
-        </div>
-      </div>
-      {collection.description && (
-        <p className="collection-description">{collection.description}</p>
-      )}
-      <div className={`pill ${isExpanded ? "is-expanded" : ""}`}>
-        {!readOnly && toolbarsEnabled && (
-          <div
-            className="collection-controls"
-            aria-label={`Ações da coleção ${collection.name}`}
-          >
-            <button
-              type="button"
-              aria-label={`${isExpanded ? "Recolher" : "Expandir"} coleção ${collection.name}`}
-              aria-expanded={isExpanded}
-              title={isExpanded ? "Recolher coleção" : "Expandir coleção"}
-              onClick={() => toggleBehavior(collection)}
-            >
-              {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-            </button>
-            <button
-              type="button"
-              aria-label={`Ordenar favoritos de ${collection.name} de ${sortDirection === "asc" ? "Z a A" : "A a Z"}`}
-              title={
-                sortDirection === "asc"
-                  ? "Ordenar de Z a A"
-                  : "Ordenar de A a Z"
-              }
-              onClick={() =>
-                setSortDirection((value) => (value === "asc" ? "desc" : "asc"))
-              }
-            >
-              <ArrowDownAZ size={13} />
-            </button>
-            <button
-              type="button"
-              aria-label={`Adicionar favorito à coleção ${collection.name}`}
-              title="Adicionar favorito"
-              onClick={add}
-            >
-              <Plus size={14} />
-            </button>
-            <button
-              type="button"
-              aria-label={`Editar coleção ${collection.name}`}
-              title="Editar coleção"
-              onClick={edit}
-            >
-              <Pencil size={13} />
-            </button>
-            <button
-              type="button"
-              aria-label={`Excluir coleção ${collection.name}`}
-              title="Excluir coleção"
-              onClick={remove}
-            >
-              <Trash2 size={13} />
-            </button>
-          </div>
-        )}
-        {!readOnly && bookmarkToolbar && (
+  // Confirmação enxuta antes de excluir uma seção/grupo — igual já existe pra
+  // favorito e coleção. Estado local (não no App): o diálogo de editar
+  // seção/grupo também é local a este CollectionRow.
+  const [pendingDeleteGroup, setPendingDeleteGroup] =
+    useState<Pick<BookmarkGroup, "id" | "name" | "display"> | null>(null);
+  const deleteGroupDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (pendingDeleteGroup && !deleteGroupDialog.current?.open)
+      deleteGroupDialog.current?.showModal();
+    else if (!pendingDeleteGroup && deleteGroupDialog.current?.open)
+      deleteGroupDialog.current.close();
+  }, [pendingDeleteGroup]);
+  async function confirmDeleteGroup() {
+    if (!pendingDeleteGroup) return;
+    await deleteGroup(pendingDeleteGroup.id);
+    // Se o modal de editar essa mesma seção/grupo também estiver aberto,
+    // fecha os dois juntos em vez de deixar um popover órfão pra trás.
+    if (openGroup?.id === pendingDeleteGroup.id) setOpenGroup(null);
+    setPendingDeleteGroup(null);
+  }
+  // Barra de edição + cartão de prévia de um favorito: reaproveitada tanto
+  // pelo pill principal ("main") quanto por cada seção (containerKey = id da
+  // seção), já que bookmarkToolbar/previewCard guardam de qual container elas
+  // vieram — só desenha aqui quando bate com o container que está chamando.
+  function renderFavoriteOverlays(containerKey: string) {
+    const toolbar =
+      bookmarkToolbar?.containerKey === containerKey ? bookmarkToolbar : null;
+    const preview =
+      previewCard?.containerKey === containerKey ? previewCard : null;
+    return (
+      <>
+        {!readOnly && toolbar && (
           <div
             className="collection-controls favorite-controls"
-            style={{ left: bookmarkToolbar.x, top: bookmarkToolbar.y }}
-            aria-label={`Ações do favorito ${bookmarkToolbar.bookmark.name}`}
+            style={{ left: toolbar.x, top: toolbar.y }}
+            aria-label={`Ações do favorito ${toolbar.bookmark.name}`}
             onMouseEnter={keepBookmarkToolbarVisible}
             onMouseLeave={deferBookmarkToolbarClear}
           >
             <button
               type="button"
-              aria-label={`Editar favorito ${bookmarkToolbar.bookmark.name}`}
+              aria-label={`Editar favorito ${toolbar.bookmark.name}`}
               title="Editar"
-              onClick={() => editBookmark(bookmarkToolbar.bookmark)}
+              onClick={() => editBookmark(toolbar.bookmark)}
             >
               <Pencil size={13} />
             </button>
             <button
               type="button"
               aria-label={
-                bookmarkToolbar.bookmark.isPublic
-                  ? "Tornar privado"
-                  : "Tornar público"
+                toolbar.bookmark.isPublic ? "Tornar privado" : "Tornar público"
               }
-              title={bookmarkToolbar.bookmark.isPublic ? "Privar" : "Exibir"}
-              className={!bookmarkToolbar.bookmark.isPublic ? "active" : ""}
+              title={toolbar.bookmark.isPublic ? "Privar" : "Exibir"}
+              className={!toolbar.bookmark.isPublic ? "active" : ""}
               onClick={() => {
-                const bookmark = bookmarkToolbar.bookmark;
+                const bookmark = toolbar.bookmark;
                 // Atualiza a barra na hora (o ícone reflete o próximo estado antes da
                 // resposta do servidor); sem isso, ela só refletia o novo estado depois
                 // que o mouse saía e voltava a passar sobre o ícone.
@@ -594,7 +817,7 @@ function CollectionRow({
                 toggleVisibility(bookmark);
               }}
             >
-              {bookmarkToolbar.bookmark.isPublic ? (
+              {toolbar.bookmark.isPublic ? (
                 <LockOpen size={13} />
               ) : (
                 <Lock size={13} />
@@ -602,43 +825,43 @@ function CollectionRow({
             </button>
             <button
               type="button"
-              aria-label={`Excluir favorito ${bookmarkToolbar.bookmark.name}`}
+              aria-label={`Excluir favorito ${toolbar.bookmark.name}`}
               title="Excluir"
-              onClick={() => removeBookmark(bookmarkToolbar.bookmark)}
+              onClick={() => removeBookmark(toolbar.bookmark)}
             >
               <Trash2 size={13} />
             </button>
           </div>
         )}
-        {!toolbarsEnabled && previewCard && (
+        {!toolbarsEnabled && preview && (
           <div
             className="favorite-preview-anchor"
-            style={{ left: previewCard.x, top: previewCard.y }}
+            style={{ left: preview.x, top: preview.y }}
           >
             <div
-              key={previewCard.bookmark.id}
+              key={preview.bookmark.id}
               className={`favorite-preview ${previewCardLeaving ? "is-leaving" : ""}`}
-              aria-label={`Prévia do favorito ${previewCard.bookmark.name}`}
+              aria-label={`Prévia do favorito ${preview.bookmark.name}`}
               onMouseEnter={keepPreviewCardVisible}
               onMouseLeave={deferPreviewCardClear}
             >
               <a
                 className="favorite-preview-link"
-                href={previewCard.bookmark.url}
+                href={preview.bookmark.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                aria-label={`Abrir favorito ${previewCard.bookmark.name}`}
-                onClick={() => openBookmark(previewCard.bookmark)}
+                aria-label={`Abrir favorito ${preview.bookmark.name}`}
+                onClick={() => openBookmark(preview.bookmark)}
               />
               <div
                 className="favorite-preview-media"
-                style={{ background: previewCard.bookmark.color }}
+                style={{ background: preview.bookmark.color }}
               >
-                {previewCard.bookmark.favicon ? (
-                  <PreviewFavicon src={previewCard.bookmark.favicon} />
+                {preview.bookmark.favicon ? (
+                  <PreviewFavicon src={preview.bookmark.favicon} />
                 ) : (
                   <span>
-                    {previewCard.bookmark.name.slice(0, 1).toUpperCase() || (
+                    {preview.bookmark.name.slice(0, 1).toUpperCase() || (
                       <Globe2 />
                     )}
                   </span>
@@ -646,60 +869,256 @@ function CollectionRow({
                 <button
                   type="button"
                   className="favorite-preview-edit"
-                  aria-label={`Editar favorito ${previewCard.bookmark.name}`}
+                  aria-label={`Editar favorito ${preview.bookmark.name}`}
                   title="Editar"
-                  onClick={() => editBookmark(previewCard.bookmark)}
+                  onClick={() => editBookmark(preview.bookmark)}
                 >
                   <Pencil size={13} />
                 </button>
                 <strong className="favorite-preview-name">
-                  {previewCard.bookmark.name}
+                  {preview.bookmark.name}
                 </strong>
               </div>
               <div className="favorite-preview-footer">
                 <div className="favorite-preview-actions">
                   <button
                     type="button"
-                    aria-label={`Curtir favorito ${previewCard.bookmark.name}`}
-                    aria-pressed={likedIds.includes(previewCard.bookmark.id)}
+                    aria-label={`Curtir favorito ${preview.bookmark.name}`}
+                    aria-pressed={likedIds.includes(preview.bookmark.id)}
                     title="Curtir"
                     className={
-                      likedIds.includes(previewCard.bookmark.id) ? "active" : ""
+                      likedIds.includes(preview.bookmark.id) ? "active" : ""
                     }
-                    onClick={() => toggleLiked(previewCard.bookmark)}
+                    onClick={() => toggleLiked(preview.bookmark)}
                   >
                     <Heart size={15} />
                   </button>
                   <button
                     type="button"
-                    aria-label={`Favoritar ${previewCard.bookmark.name}`}
-                    aria-pressed={bookmarkedIds.includes(
-                      previewCard.bookmark.id,
-                    )}
+                    aria-label={`Favoritar ${preview.bookmark.name}`}
+                    aria-pressed={bookmarkedIds.includes(preview.bookmark.id)}
                     title="Favoritar"
                     className={
-                      bookmarkedIds.includes(previewCard.bookmark.id)
+                      bookmarkedIds.includes(preview.bookmark.id)
                         ? "active"
                         : ""
                     }
-                    onClick={() => toggleBookmarked(previewCard.bookmark)}
+                    onClick={() => toggleBookmarked(preview.bookmark)}
                   >
                     <BookmarkIcon size={15} />
                   </button>
                   <button
                     type="button"
-                    aria-label={`Compartilhar favorito ${previewCard.bookmark.name}`}
+                    aria-label={`Compartilhar favorito ${preview.bookmark.name}`}
                     title="Compartilhar"
-                    onClick={() => shareBookmark(previewCard.bookmark)}
+                    onClick={() => shareBookmark(preview.bookmark)}
                   >
                     <Share2 size={15} />
                   </button>
                 </div>
-                {previewCard.bookmark.description && (
+                {preview.bookmark.description && (
                   <div className="favorite-preview-meta">
-                    <span>{previewCard.bookmark.description}</span>
+                    <span>{preview.bookmark.description}</span>
                   </div>
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
+  return (
+    <>
+    <article
+      className={`collection ${bookmarkToolbar || toolbarsEnabled || previewCard ? "has-visible-toolbar" : ""} ${dragHandle.dragOver ? "drop-target-collection" : ""}`}
+      onDragOver={(event) => {
+        if (!toolbarsEnabled) return;
+        event.preventDefault();
+        dragHandle.onDragOver();
+      }}
+      onDragLeave={dragHandle.onDragLeave}
+      onDrop={(event) => {
+        event.preventDefault();
+        dragHandle.onDrop();
+      }}
+    >
+      <div className="collection-heading">
+        <div className="collection-label">
+          <span
+            className="collection-dot"
+            style={{ background: collection.color }}
+          />
+          <h3>{collection.name}</h3>
+          <span className="count">{totalBookmarks}</span>
+        </div>
+        {(!readOnly || collection.id === "temporary-filter") && (
+          <div
+            className="collection-controls"
+            aria-label={`Ações da coleção ${collection.name}`}
+          >
+            <button
+              type="button"
+              aria-label={`${isExpanded ? "Recolher" : "Expandir"} coleção ${collection.name}`}
+              aria-expanded={isExpanded}
+              title={isExpanded ? "Recolher coleção" : "Expandir coleção"}
+              onClick={() => toggleBehavior(collection)}
+            >
+              {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            </button>
+            {!readOnly && toolbarsEnabled && (
+              <>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className={`drag-handle ${dragHandle.dragging ? "is-dragging" : ""}`}
+                  aria-label={`Arrastar para reordenar a coleção ${collection.name}`}
+                  title="Arrastar para reordenar"
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    dragHandle.onDragStart();
+                  }}
+                  onDragEnd={dragHandle.onDragEnd}
+                >
+                  <GripVertical size={13} />
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Ordenar favoritos de ${collection.name} de ${sortDirection === "asc" ? "Z a A" : "A a Z"}`}
+                  title={
+                    sortDirection === "asc"
+                      ? "Ordenar de Z a A"
+                      : "Ordenar de A a Z"
+                  }
+                  onClick={() =>
+                    setSortDirection((value) =>
+                      value === "asc" ? "desc" : "asc",
+                    )
+                  }
+                >
+                  {sortDirection === "desc" ? (
+                    <ArrowDownAZ size={13} />
+                  ) : (
+                    <ArrowUpAZ size={13} />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Adicionar favorito à coleção ${collection.name}`}
+                  title="Adicionar favorito"
+                  onClick={() => add()}
+                >
+                  <Plus size={14} />
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Editar coleção ${collection.name}`}
+                  title="Editar coleção"
+                  onClick={edit}
+                >
+                  <Pencil size={13} />
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Excluir coleção ${collection.name}`}
+                  title="Excluir coleção"
+                  onClick={remove}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+      {collection.description && (
+        <p className="collection-description">{collection.description}</p>
+      )}
+      <div
+        className={`collection-frame ${sectionGroups.length ? "has-sections" : ""}`}
+      >
+      <div className={`pill favorite-anchor ${isExpanded ? "is-expanded" : ""}`}>
+        {renderFavoriteOverlays("main")}
+        {renderFavoriteOverlays("group-expand")}
+        {expandedGroupLive && (
+          <div
+            className="group-expand-anchor"
+            style={{ left: expandedGroup?.x, top: expandedGroup?.y }}
+          >
+            <div
+              className="group-expand-panel"
+              onMouseEnter={keepGroupExpandVisible}
+              onMouseLeave={deferGroupExpandClear}
+            >
+              <div className="group-expand-heading">
+                <span>{expandedGroupLive.name}</span>
+                <button
+                  type="button"
+                  aria-label="Fechar"
+                  onClick={() => {
+                    keepGroupExpandVisible();
+                    setExpandedGroup(null);
+                  }}
+                >
+                  <X size={13} />
+                </button>
+              </div>
+              <div className="group-expand-icons">
+                {expandedGroupLive.bookmarks.map((b) => (
+                  <div
+                    className="favorite"
+                    key={b.id}
+                    onMouseEnter={(event) => {
+                      const container =
+                        event.currentTarget.closest(".favorite-anchor");
+                      const favoriteRect =
+                        event.currentTarget.getBoundingClientRect();
+                      const containerRect = container?.getBoundingClientRect();
+                      const x = containerRect
+                        ? favoriteRect.left -
+                          containerRect.left +
+                          favoriteRect.width / 2
+                        : undefined;
+                      if (toolbarsEnabled) {
+                        scheduleBookmarkToolbar({
+                          bookmark: b,
+                          containerKey: "group-expand",
+                          x,
+                          y: containerRect
+                            ? favoriteRect.top - containerRect.top - 16
+                            : undefined,
+                        });
+                      } else {
+                        schedulePreviewCard({
+                          bookmark: b,
+                          containerKey: "group-expand",
+                          x,
+                          y: containerRect
+                            ? favoriteRect.top -
+                              containerRect.top +
+                              favoriteRect.height / 2
+                            : undefined,
+                        });
+                      }
+                    }}
+                    onMouseLeave={(event) => {
+                      if (toolbarsEnabled) clearBookmarkToolbar(event);
+                      else deferPreviewCardClear();
+                    }}
+                  >
+                    <a
+                      href={b.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={b.name}
+                      onClick={() => openBookmark(b)}
+                    >
+                      <Sphere bookmark={b} shape={collection.shape} />
+                      <span className="sr-only">{b.name}</span>
+                    </a>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
@@ -724,7 +1143,17 @@ function CollectionRow({
             : sortedItems.slice(active * 10, active * 10 + 10)
           ).map((item) => (
             <div
-              className={`favorite ${dragOverId === item.id && draggedId !== item.id ? "drop-target" : ""}`}
+              className={`favorite ${
+                dragOverId === item.id && draggedId !== item.id
+                  ? item.kind === "group"
+                    ? "drop-target"
+                    : dragOverZone === "before"
+                      ? "drop-before"
+                      : dragOverZone === "after"
+                        ? "drop-after"
+                        : "drop-target"
+                  : ""
+              }`}
               key={item.id}
               draggable={toolbarsEnabled}
               onDragStart={(event) => {
@@ -732,57 +1161,96 @@ function CollectionRow({
                 setDraggedId(item.id);
               }}
               onDragOver={(event) => {
-                if (!toolbarsEnabled || !draggedId) return;
+                if (!toolbarsEnabled || !draggedId || draggedId === item.id)
+                  return;
                 event.preventDefault();
+                event.stopPropagation();
                 setDragOverId(item.id);
+                setDragOverZone(
+                  item.kind === "group" || draggedIsTile
+                    ? "center"
+                    : dropZone(event),
+                );
               }}
               onDragLeave={() =>
                 setDragOverId((id) => (id === item.id ? null : id))
               }
               onDrop={(event) => {
                 event.preventDefault();
-                handleDrop(item);
+                event.stopPropagation();
+                handleFavoriteDrop(item, null);
               }}
               onDragEnd={() => {
                 setDraggedId(null);
                 setDragOverId(null);
+                setDragOverZone(null);
               }}
               onMouseEnter={(event) => {
-                if (item.kind !== "bookmark") return;
-                const b = item.bookmark;
-                const pill = event.currentTarget.closest(".pill");
-                const favoriteRect =
-                  event.currentTarget.getBoundingClientRect();
-                const pillRect = pill?.getBoundingClientRect();
-                const x = pillRect
-                  ? favoriteRect.left - pillRect.left + favoriteRect.width / 2
-                  : undefined;
-                if (toolbarsEnabled) {
-                  scheduleBookmarkToolbar({
-                    bookmark: b,
-                    x,
-                    y: pillRect
-                      ? favoriteRect.top - pillRect.top - 16
-                      : undefined,
-                  });
+                if (item.kind === "bookmark") {
+                  const b = item.bookmark;
+                  const container =
+                    event.currentTarget.closest(".favorite-anchor");
+                  const favoriteRect =
+                    event.currentTarget.getBoundingClientRect();
+                  const containerRect = container?.getBoundingClientRect();
+                  const x = containerRect
+                    ? favoriteRect.left -
+                      containerRect.left +
+                      favoriteRect.width / 2
+                    : undefined;
+                  if (toolbarsEnabled) {
+                    scheduleBookmarkToolbar({
+                      bookmark: b,
+                      containerKey: "main",
+                      x,
+                      y: containerRect
+                        ? favoriteRect.top - containerRect.top - 16
+                        : undefined,
+                    });
+                  } else {
+                    // Centro do ícone (não o topo): o cartão de prévia se ancora por
+                    // esse ponto pra crescer ao redor do ícone, não acima dele.
+                    schedulePreviewCard({
+                      bookmark: b,
+                      containerKey: "main",
+                      x,
+                      y: containerRect
+                        ? favoriteRect.top -
+                          containerRect.top +
+                          favoriteRect.height / 2
+                        : undefined,
+                    });
+                  }
                 } else {
-                  // Centro do ícone (não o topo): o cartão de prévia se ancora por
-                  // esse ponto pra crescer ao redor do ícone, não acima dele.
-                  schedulePreviewCard({
-                    bookmark: b,
-                    x,
-                    y: pillRect
-                      ? favoriteRect.top -
-                        pillRect.top +
-                        favoriteRect.height / 2
-                      : undefined,
-                  });
+                  // Mesma lógica do cartão de prévia, só que pra abrir o painel
+                  // de favoritos do grupo em vez de um cartão — ver
+                  // scheduleGroupExpand. Não faz nada com o lápis ligado (nesse
+                  // modo, clicar no tile abre o modal de edição em vez disso).
+                  const container =
+                    event.currentTarget.closest(".favorite-anchor");
+                  const tileRect =
+                    event.currentTarget.getBoundingClientRect();
+                  const containerRect = container?.getBoundingClientRect();
+                  const x = containerRect
+                    ? tileRect.left - containerRect.left + tileRect.width / 2
+                    : undefined;
+                  // Topo do tile menos uma folga (não o centro): o painel
+                  // cresce pra CIMA a partir daqui (ver transform em
+                  // .group-expand-anchor), então isso precisa ficar acima do
+                  // ícone inteiro, senão o painel cobre o próprio tile.
+                  const y = containerRect
+                    ? tileRect.top - containerRect.top - 10
+                    : undefined;
+                  scheduleGroupExpand({ groupId: item.group.id, x, y });
                 }
               }}
               onMouseLeave={(event) => {
-                if (item.kind !== "bookmark") return;
-                if (toolbarsEnabled) clearBookmarkToolbar(event);
-                else deferPreviewCardClear();
+                if (item.kind === "bookmark") {
+                  if (toolbarsEnabled) clearBookmarkToolbar(event);
+                  else deferPreviewCardClear();
+                } else {
+                  deferGroupExpandClear();
+                }
               }}
             >
               {item.kind === "bookmark" ? (
@@ -800,10 +1268,23 @@ function CollectionRow({
                 <>
                   <GroupTile
                     group={item.group}
-                    shape={collection.shape}
-                    onOpen={() => setOpenGroup(item.group)}
+                    shape={item.group.shape || collection.shape}
+                    expanded={expandedGroup?.groupId === item.group.id}
+                    onOpen={() => {
+                      // Sem o lápis, o painel já abre sozinho ao passar o
+                      // mouse (ver onMouseEnter acima) — clicar não faz nada.
+                      if (toolbarsEnabled) setOpenGroup(item.group);
+                    }}
                   />
-                  <span className="sr-only">{item.group.name}</span>
+                  {item.group.showName ? (
+                    <span className="favorite-name">
+                      {item.group.name.length > 24
+                        ? `${item.group.name.slice(0, 24)}…`
+                        : item.group.name}
+                    </span>
+                  ) : (
+                    <span className="sr-only">{item.group.name}</span>
+                  )}
                 </>
               )}
             </div>
@@ -830,6 +1311,223 @@ function CollectionRow({
           {items.length} favoritos
         </p>
       )}
+      {sectionGroups.map((section) => {
+        const sectionIsCollapsed = Boolean(collapsedSections[section.id]);
+        const sectionSortDirection = sectionSort[section.id];
+        const sortedSectionBookmarks = sectionSortDirection
+          ? [...section.bookmarks].sort((a, b) =>
+              sectionSortDirection === "asc"
+                ? a.name.localeCompare(b.name, "pt-BR")
+                : b.name.localeCompare(a.name, "pt-BR"),
+            )
+          : section.bookmarks;
+        return (
+        <div
+          className={`collection-section favorite-anchor ${
+            dragOverSectionId === section.id ? "drop-target-section" : ""
+          }`}
+          key={section.id}
+          onDragOver={(event) => {
+            if (!toolbarsEnabled || !draggedId) return;
+            event.preventDefault();
+            setDragOverSectionId(section.id);
+          }}
+          onDragLeave={(event) => {
+            const nextTarget = event.relatedTarget as HTMLElement | null;
+            if (!nextTarget?.closest(`.collection-section`)) {
+              setDragOverSectionId((id) => (id === section.id ? null : id));
+            }
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            handleSectionContainerDrop(section.id);
+          }}
+        >
+          <div className="collection-section-divider">
+            <span
+              className="collection-section-dot"
+              style={{ background: section.color }}
+            />
+            <span className="collection-section-name">{section.name}</span>
+            <span className="collection-section-line" />
+            {!readOnly && (
+              <div
+                className="collection-controls"
+                aria-label={`Ações da seção ${section.name}`}
+              >
+                <button
+                  type="button"
+                  aria-label={`${sectionIsCollapsed ? "Expandir" : "Recolher"} seção ${section.name}`}
+                  aria-expanded={!sectionIsCollapsed}
+                  title={sectionIsCollapsed ? "Expandir seção" : "Recolher seção"}
+                  onClick={() =>
+                    setCollapsedSections((current) => ({
+                      ...current,
+                      [section.id]: !current[section.id],
+                    }))
+                  }
+                >
+                  {sectionIsCollapsed ? (
+                    <ChevronDown size={13} />
+                  ) : (
+                    <ChevronUp size={13} />
+                  )}
+                </button>
+                {toolbarsEnabled && (
+                  <>
+                    <button
+                      type="button"
+                      aria-label={`Ordenar favoritos de ${section.name} de ${sectionSortDirection === "asc" ? "Z a A" : "A a Z"}`}
+                      title={
+                        sectionSortDirection === "asc"
+                          ? "Ordenar de Z a A"
+                          : "Ordenar de A a Z"
+                      }
+                      onClick={() =>
+                        setSectionSort((current) => ({
+                          ...current,
+                          [section.id]:
+                            current[section.id] === "asc" ? "desc" : "asc",
+                        }))
+                      }
+                    >
+                      {sectionSortDirection === "desc" ? (
+                        <ArrowDownAZ size={13} />
+                      ) : (
+                        <ArrowUpAZ size={13} />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Adicionar favorito à seção ${section.name}`}
+                      title="Adicionar favorito"
+                      onClick={() => add(section.id)}
+                    >
+                      <Plus size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Editar seção ${section.name}`}
+                      title="Editar seção"
+                      onClick={() => setOpenGroup(section)}
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Excluir seção ${section.name}`}
+                      title="Excluir seção"
+                      onClick={() => setPendingDeleteGroup(section)}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+          {renderFavoriteOverlays(section.id)}
+          {!sectionIsCollapsed && (
+          <div className="favorites collection-section-favorites">
+            {sortedSectionBookmarks.map((b) => (
+              <div
+                className={`favorite ${
+                  dragOverId === b.id && draggedId !== b.id
+                    ? dragOverZone === "before"
+                      ? "drop-before"
+                      : dragOverZone === "after"
+                        ? "drop-after"
+                        : "drop-target"
+                    : ""
+                }`}
+                key={b.id}
+                draggable={toolbarsEnabled}
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = "move";
+                  setDraggedId(b.id);
+                }}
+                onDragOver={(event) => {
+                  if (!toolbarsEnabled || !draggedId || draggedId === b.id)
+                    return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setDragOverSectionId(section.id);
+                  setDragOverId(b.id);
+                  setDragOverZone(draggedIsTile ? "center" : dropZone(event));
+                }}
+                onDragLeave={() =>
+                  setDragOverId((id) => (id === b.id ? null : id))
+                }
+                onDrop={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  handleFavoriteDrop({ kind: "bookmark", id: b.id }, section.id);
+                }}
+                onDragEnd={() => {
+                  setDraggedId(null);
+                  setDragOverId(null);
+                  setDragOverZone(null);
+                  setDragOverSectionId(null);
+                }}
+                onMouseEnter={(event) => {
+                  const container =
+                    event.currentTarget.closest(".favorite-anchor");
+                  const favoriteRect =
+                    event.currentTarget.getBoundingClientRect();
+                  const containerRect = container?.getBoundingClientRect();
+                  const x = containerRect
+                    ? favoriteRect.left -
+                      containerRect.left +
+                      favoriteRect.width / 2
+                    : undefined;
+                  if (toolbarsEnabled) {
+                    scheduleBookmarkToolbar({
+                      bookmark: b,
+                      containerKey: section.id,
+                      x,
+                      y: containerRect
+                        ? favoriteRect.top - containerRect.top - 16
+                        : undefined,
+                    });
+                  } else {
+                    schedulePreviewCard({
+                      bookmark: b,
+                      containerKey: section.id,
+                      x,
+                      y: containerRect
+                        ? favoriteRect.top -
+                          containerRect.top +
+                          favoriteRect.height / 2
+                        : undefined,
+                    });
+                  }
+                }}
+                onMouseLeave={(event) => {
+                  if (toolbarsEnabled) clearBookmarkToolbar(event);
+                  else deferPreviewCardClear();
+                }}
+              >
+                <a
+                  href={b.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={b.name}
+                  onClick={() => openBookmark(b)}
+                >
+                  <Sphere bookmark={b} shape={collection.shape} />
+                  <span className="sr-only">{b.name}</span>
+                </a>
+              </div>
+            ))}
+            {!section.bookmarks.length && (
+              <span className="empty-row">Seção vazia</span>
+            )}
+          </div>
+          )}
+        </div>
+        );
+      })}
+      </div>
     </article>
     <dialog
       ref={groupDialog}
@@ -843,19 +1541,48 @@ function CollectionRow({
       {openGroupLive && (
         <div className="modal-content">
           <div className="modal-heading">
-            <h2 id="group-dialog-title">
-              {readOnly ? openGroupLive.name : "Editar grupo"}
-            </h2>
-            <button
-              className="icon-button"
-              type="button"
-              aria-label="Fechar modal"
-              onClick={() => setOpenGroup(null)}
-            >
-              <X size={20} />
-            </button>
+            <div>
+              <h2 id="group-dialog-title">
+                {canEditGroup
+                  ? openGroupLive.display === "section"
+                    ? "Editar seção"
+                    : "Editar grupo"
+                  : openGroupLive.name}
+              </h2>
+            </div>
+            <div className="modal-heading-actions">
+              {canEditGroup && (
+                <div
+                  className="bookmark-actions"
+                  aria-label={`Ações da ${openGroupLive.display === "section" ? "seção" : "grupo"}`}
+                >
+                  <button
+                    type="button"
+                    className="danger-icon"
+                    disabled={groupBusy}
+                    aria-label={
+                      openGroupLive.display === "section"
+                        ? "Excluir seção"
+                        : "Excluir grupo"
+                    }
+                    title="Excluir"
+                    onClick={() => setPendingDeleteGroup(openGroupLive)}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              )}
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="Fechar modal"
+                onClick={() => setOpenGroup(null)}
+              >
+                <X size={20} />
+              </button>
+            </div>
           </div>
-          {!readOnly && (
+          {canEditGroup && (
             <div className="group-dialog-fields">
               <label>
                 Nome
@@ -863,37 +1590,33 @@ function CollectionRow({
                   maxLength={120}
                   value={groupName}
                   onChange={(e) => setGroupName(e.target.value)}
-                  onBlur={() =>
-                    groupName.trim() &&
-                    groupName !== openGroupLive.name &&
-                    void renameGroup(openGroupLive.id, groupName, groupColor)
-                  }
                 />
               </label>
-              <div className="color-picker">
-                {[
-                  "#b9ee78",
-                  "#7cc9ec",
-                  "#ae9cf4",
-                  "#eea4c3",
-                  "#edb677",
-                  "#9ba6b2",
-                ].map((color) => (
-                  <button
-                    type="button"
-                    key={color}
-                    style={{ background: color }}
-                    aria-label={`Usar cor ${color}`}
-                    aria-pressed={groupColor === color}
-                    onClick={() => {
-                      setGroupColor(color);
-                      void renameGroup(openGroupLive.id, groupName, color);
-                    }}
-                  >
-                    {groupColor === color && <Check size={18} />}
-                  </button>
-                ))}
-              </div>
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={groupShowName}
+                  onChange={(e) => setGroupShowName(e.target.checked)}
+                />
+                Exibir nome
+              </label>
+              <label>
+                <span>
+                  Descrição <span className="optional">opcional</span>
+                </span>
+                <textarea
+                  rows={2}
+                  maxLength={2000}
+                  value={groupDescription}
+                  onChange={(e) => setGroupDescription(e.target.value)}
+                />
+              </label>
+            </div>
+          )}
+          {canEditGroup && (
+            <div className="collection-bookmarks-heading">
+              <h3 id="group-bookmarks-title">Favicons</h3>
+              <span>{openGroupLive.bookmarks.length}</span>
             </div>
           )}
           <ul className="collection-bookmarks-list">
@@ -915,7 +1638,7 @@ function CollectionRow({
                 >
                   {bookmark.name}
                 </a>
-                {!readOnly && (
+                {canEditGroup && (
                   <div className="collection-bookmark-actions">
                     <button
                       type="button"
@@ -938,20 +1661,146 @@ function CollectionRow({
               </li>
             ))}
           </ul>
-          {!readOnly && (
+          {canEditGroup && (
+            <div className="shape-options">
+              <span>Formato da Moldura</span>
+              <div>
+                <button
+                  type="button"
+                  className={groupShape === null ? "active" : ""}
+                  aria-pressed={groupShape === null}
+                  onClick={() => setGroupShape(null)}
+                >
+                  Padrão da coleção
+                </button>
+                {[
+                  ["circle", "Redondo"],
+                  ["square", "Quadrado"],
+                  ["rounded", "Arredondado"],
+                ].map(([value, label]) => (
+                  <button
+                    type="button"
+                    key={value}
+                    className={groupShape === value ? "active" : ""}
+                    aria-pressed={groupShape === value}
+                    onClick={() => setGroupShape(value)}
+                  >
+                    <span className={`shape-sample ${value}`} />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {canEditGroup && (
+            <div>
+              <label>
+                Estilo de cor
+              </label>
+              <div className="color-picker">
+                {[
+                  "#b9ee78",
+                  "#7cc9ec",
+                  "#ae9cf4",
+                  "#eea4c3",
+                  "#edb677",
+                  "#9ba6b2",
+                ].map((color) => (
+                  <button
+                    type="button"
+                    key={color}
+                    style={{ background: color }}
+                    aria-label={`Usar cor ${color}`}
+                    aria-pressed={groupColor === color}
+                    onClick={() => setGroupColor(color)}
+                  >
+                    {groupColor === color && <Check size={18} />}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {canEditGroup && (
             <div className="modal-footer">
               <button
+                className="secondary cancel"
                 type="button"
-                className="danger-text"
-                onClick={() => {
-                  void deleteGroup(openGroupLive.id);
+                disabled={groupBusy}
+                onClick={() => setOpenGroup(null)}
+              >
+                Cancelar
+              </button>
+              <button
+                className="primary"
+                type="button"
+                disabled={groupBusy || !groupName.trim()}
+                onClick={async () => {
+                  setGroupBusy(true);
+                  await renameGroup(openGroupLive.id, {
+                    name: groupName.trim(),
+                    color: groupColor,
+                    description: groupDescription,
+                    showName: groupShowName,
+                    shape: groupShape,
+                  });
+                  setGroupBusy(false);
                   setOpenGroup(null);
                 }}
               >
-                Excluir grupo
+                {groupBusy ? "Salvando…" : "Salvar alterações"}
               </button>
             </div>
           )}
+        </div>
+      )}
+    </dialog>
+    <dialog
+      ref={deleteGroupDialog}
+      className="confirm-dialog"
+      aria-labelledby="delete-group-title"
+      onCancel={() => setPendingDeleteGroup(null)}
+      onClick={(e) => {
+        if (e.target === deleteGroupDialog.current) setPendingDeleteGroup(null);
+      }}
+    >
+      {pendingDeleteGroup && (
+        <div className="modal-content">
+          <div className="modal-heading">
+            <h2 id="delete-group-title">
+              {pendingDeleteGroup.display === "section"
+                ? "Excluir seção"
+                : "Excluir grupo"}
+            </h2>
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="Fechar modal"
+              onClick={() => setPendingDeleteGroup(null)}
+            >
+              <X size={20} />
+            </button>
+          </div>
+          <div className="delete-confirm">
+            <p>
+              Excluir "{pendingDeleteGroup.name}"? Os favoritos que estão nela
+              não são apagados — só voltam a ficar fora de qualquer{" "}
+              {pendingDeleteGroup.display === "section" ? "seção" : "grupo"}.
+            </p>
+            <button
+              type="button"
+              className="danger"
+              onClick={() => void confirmDeleteGroup()}
+            >
+              Confirmar exclusão
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setPendingDeleteGroup(null)}
+            >
+              Cancelar
+            </button>
+          </div>
         </div>
       )}
     </dialog>
@@ -983,12 +1832,28 @@ export default function App({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [iconUrl, setIconUrl] = useState("");
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [newSectionName, setNewSectionName] = useState("");
   // Excluir pela barra de ferramentas do ícone não deve abrir a janela de edição
   // inteira — só uma confirmação enxuta. Estado à parte do "draft"/"kind" usados
   // pelo modal de edição, pra não precisar montar esse modal só pra excluir.
   const [pendingDeleteBookmark, setPendingDeleteBookmark] =
     useState<Bookmark | null>(null);
+  // Mesma ideia pra "Excluir coleção" — tanto na barra de ferramentas da
+  // coleção quanto no rodapé do próprio modal de edição. Só id/name porque é
+  // tudo que a confirmação precisa; a barra passa a coleção inteira e o
+  // modal passa só um recorte do "draft" que está sendo editado.
+  const [pendingDeleteCollection, setPendingDeleteCollection] = useState<Pick<
+    Collection,
+    "id" | "name"
+  > | null>(null);
+  // Mesma ideia, pra "Excluir seção" na lista de seções do editor de coleção
+  // (diferente da confirmação equivalente dentro de CollectionRow, que cobre
+  // a barra de ferramentas da própria seção e o diálogo de editar seção —
+  // este aqui é só pro editor de coleção, que vive neste componente).
+  const [pendingDeleteSection, setPendingDeleteSection] = useState<Pick<
+    BookmarkGroup,
+    "id" | "name" | "display"
+  > | null>(null);
   const [lockedBookmarkCollectionId, setLockedBookmarkCollectionId] =
     useState("");
   const [isLiked, setIsLiked] = useState(false);
@@ -1004,9 +1869,54 @@ export default function App({
   );
   const [filterOpen, setFilterOpen] = useState(false);
   const [activeFilters, setActiveFilters] = useState<FilterKey[]>([]);
+  // Busca (Postgres full text search em nome/descrição/URL, ver /api/search)
+  // — separada da barra "cole um link" do topo, que serve só pra ADICIONAR
+  // um favorito novo, não pra achar um já salvo.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<
+    (Bookmark & { collectionName: string })[]
+  >([]);
+  const [searchBusy, setSearchBusy] = useState(false);
+  const searchTimer = useRef<number | null>(null);
+  // Recolhe a busca + "Nova coleção" + "Filtrar" (e o painel de filtro, se
+  // aberto) num só clique — útil pra quem já tem os filtros ajustados e só
+  // quer mais espaço pra lista de coleções.
+  const [heroExpanded, setHeroExpanded] = useState(true);
+  // "Resultados do filtro" é uma coleção sintética (recalculada a cada render,
+  // nunca salva no servidor) — expandir/recolher ela não pode passar por
+  // toggleCollectionBehavior (que faria PATCH /collections/temporary-filter,
+  // um id que não existe de verdade), então tem seu próprio estado local.
+  const [filterExpanded, setFilterExpanded] = useState(true);
   // Controla se as barras de ferramentas (da coleção e dos favoritos) aparecem ao
   // passar o mouse. Desligado por padrão para não atrapalhar quem só quer navegar.
   const [toolbarsEnabled, setToolbarsEnabled] = useState(false);
+  // Botão "expandir/recolher todas" da barra de ações em massa: não é
+  // derivado (nem toda coleção precisa estar no mesmo estado o tempo todo),
+  // só lembra qual foi o último comando disparado daqui.
+  const [allCollectionsExpanded, setAllCollectionsExpanded] = useState(true);
+  // Igual ao sortDirection de cada coleção/seção: null = ainda não ordenou
+  // nada por aqui (seta pra cima, próximo clique ordena A-Z).
+  const [collectionsSortDirection, setCollectionsSortDirection] = useState<
+    "asc" | "desc" | null
+  >(null);
+  // "Sinal" que cada CollectionRow escuta pra recolher/expandir todas as
+  // PRÓPRIAS seções de uma vez — precisa ser um objeto novo a cada clique
+  // (mesmo repetindo o mesmo "collapse") pra sempre disparar o efeito, já
+  // que collapsedSections é estado local de cada linha, não vem por prop.
+  const [sectionsBulkAction, setSectionsBulkAction] = useState<{
+    collapse: boolean;
+    token: number;
+  } | null>(null);
+  // Arrastar uma coleção pelo "grip" da própria barra de ferramentas pra
+  // reordenar a lista "Suas coleções" — mesma ideia do arrastar favoritos,
+  // só que sem terços/zonas: aqui é só "solta antes desta".
+  const [draggedCollectionId, setDraggedCollectionId] = useState<
+    string | null
+  >(null);
+  const [dragOverCollectionId, setDragOverCollectionId] = useState<
+    string | null
+  >(null);
   const [isCollectionCreatorOpen, setIsCollectionCreatorOpen] = useState(false);
   const [collectionDraft, setCollectionDraft] = useState<Draft>({ ...blank });
   const [profile, setProfile] = useState<Account | undefined>(account);
@@ -1035,6 +1945,9 @@ export default function App({
   const dialog = useRef<HTMLDialogElement>(null);
   const collectionDialog = useRef<HTMLDialogElement>(null);
   const deleteBookmarkDialog = useRef<HTMLDialogElement>(null);
+  const deleteCollectionDialog = useRef<HTMLDialogElement>(null);
+  const searchDialog = useRef<HTMLDialogElement>(null);
+  const deleteSectionDialog = useRef<HTMLDialogElement>(null);
   const modalDrag = useRef<{
     pointerId: number;
     startX: number;
@@ -1093,6 +2006,18 @@ export default function App({
           bookmarks.sort((a, b) => (usage[b.id] || 0) - (usage[a.id] || 0));
         if (activeFilters.includes("leastUsed"))
           bookmarks.sort((a, b) => (usage[a.id] || 0) - (usage[b.id] || 0));
+        // "Mais/menos usados" e "mais recentes/antigos" ordenam a coleção
+        // inteira do dono — sem limite, uma biblioteca grande deixaria essa
+        // visão pesada pra pouco ganho prático (ninguém rola até o item nº
+        // 500 "mais usado"). Os filtros que só restringem (curtido, público,
+        // etc.) não têm esse teto — lá o total já é naturalmente pequeno.
+        if (
+          activeFilters.includes("newest") ||
+          activeFilters.includes("oldest") ||
+          activeFilters.includes("mostUsed") ||
+          activeFilters.includes("leastUsed")
+        )
+          bookmarks = bookmarks.slice(0, 100);
         return {
           id: "temporary-filter",
           name: "Resultados do filtro",
@@ -1101,6 +2026,7 @@ export default function App({
             .join(" · "),
           color: "#b9ee78",
           isPublic: false,
+          behavior: filterExpanded ? "expansive" : "fixed",
           bookmarks,
           groups: [],
         };
@@ -1113,6 +2039,13 @@ export default function App({
     kind === "collection" && draft.id
       ? collections.find((collection) => collection.id === draft.id)
           ?.bookmarks || []
+      : [];
+  const editingCollectionSections =
+    kind === "collection" && draft.id
+      ? (
+          collections.find((collection) => collection.id === draft.id)
+            ?.groups || []
+        ).filter((g) => g.display === "section")
       : [];
   async function reload() {
     setLoading(true);
@@ -1200,6 +2133,69 @@ export default function App({
       setNotice((e as Error).message);
     }
   }
+  // Expande/recolhe TODAS as coleções de uma vez (persiste, é o mesmo campo
+  // do chevron individual) e avisa cada CollectionRow (via sectionsBulkAction)
+  // pra fazer o mesmo com as próprias seções, que são estado local de cada
+  // linha e não vêm do servidor.
+  async function toggleAllCollections() {
+    const nextExpanded = !allCollectionsExpanded;
+    setAllCollectionsExpanded(nextExpanded);
+    setSectionsBulkAction({ collapse: !nextExpanded, token: Date.now() });
+    try {
+      await Promise.all(
+        collections.map((c) =>
+          api(`/collections/${c.id}`, "PATCH", {
+            name: c.name,
+            description: c.description,
+            color: c.color,
+            isPublic: c.isPublic,
+            shape: c.shape,
+            behavior: nextExpanded ? "expansive" : "fixed",
+          }),
+        ),
+      );
+      await silentReload();
+    } catch (e) {
+      setNotice((e as Error).message);
+    }
+  }
+  async function reorderCollections(orderedIds: string[]) {
+    try {
+      await api("/collections/reorder", "PATCH", { orderedIds });
+      await silentReload();
+    } catch (e) {
+      setNotice((e as Error).message);
+    }
+  }
+  // Reordena os CONTAINERS pelo nome — não mexe nos favoritos/seções de
+  // dentro de cada coleção, só na posição das coleções entre si. Alterna
+  // A-Z/Z-A a cada clique, igual ao sort de favoritos de uma coleção/seção.
+  function sortCollectionsAlphabetically() {
+    const next = collectionsSortDirection === "asc" ? "desc" : "asc";
+    setCollectionsSortDirection(next);
+    const orderedIds = [...collections]
+      .sort((a, b) =>
+        next === "asc"
+          ? a.name.localeCompare(b.name, "pt-BR")
+          : b.name.localeCompare(a.name, "pt-BR"),
+      )
+      .map((c) => c.id);
+    void reorderCollections(orderedIds);
+  }
+  function handleCollectionDrop(targetId: string) {
+    const sourceId = draggedCollectionId;
+    setDraggedCollectionId(null);
+    setDragOverCollectionId(null);
+    // "Resultados do filtro" não é uma coleção de verdade (não tem grip pra
+    // iniciar um arrasto, mas ainda pode ser um alvo de drop já que o
+    // onDragOver/onDrop do <article> não distingue as duas).
+    if (!sourceId || sourceId === targetId || targetId === "temporary-filter")
+      return;
+    const ids = collections.map((c) => c.id).filter((id) => id !== sourceId);
+    const targetIndex = ids.indexOf(targetId);
+    ids.splice(targetIndex, 0, sourceId);
+    void reorderCollections(ids);
+  }
   async function createGroup(collectionId: string, bookmarkIds: string[]) {
     try {
       const created = await api("/groups", "POST", {
@@ -1207,6 +2203,25 @@ export default function App({
         name: "Novo grupo",
         color: "#b9ee78",
         bookmarkIds,
+      });
+      await silentReload();
+      return created as BookmarkGroup;
+    } catch (e) {
+      setNotice((e as Error).message);
+      return null;
+    }
+  }
+  // Diferente de createGroup (agrupamento manual, arrastando um ícone sobre
+  // outro, sempre com 2+ favoritos de cara): uma seção pode nascer vazia — o
+  // usuário adiciona favoritos a ela depois, pelo "+" da própria seção.
+  async function createSection(collectionId: string, name: string) {
+    try {
+      const created = await api("/groups", "POST", {
+        collectionId,
+        name,
+        color: "#b9ee78",
+        display: "section",
+        bookmarkIds: [],
       });
       await silentReload();
       return created as BookmarkGroup;
@@ -1223,9 +2238,38 @@ export default function App({
       setNotice((e as Error).message);
     }
   }
-  async function renameGroup(groupId: string, name: string, color: string) {
+  // Reposiciona um favorito dentro de uma lista (a da coleção ou a de uma
+  // seção) sem agrupá-lo com ninguém — usado ao soltar um ícone arrastado
+  // entre dois outros, ou dentro do corpo de uma seção. orderedIds já vem com
+  // o item arrastado na posição final desejada.
+  async function reorderBookmarks(
+    collectionId: string,
+    groupId: string | null,
+    orderedIds: string[],
+  ) {
     try {
-      await api(`/groups/${groupId}`, "PATCH", { name, color });
+      await api("/bookmarks/reorder", "PATCH", {
+        collectionId,
+        groupId,
+        orderedIds,
+      });
+      await silentReload();
+    } catch (e) {
+      setNotice((e as Error).message);
+    }
+  }
+  async function renameGroup(
+    groupId: string,
+    data: {
+      name: string;
+      color: string;
+      description: string;
+      showName: boolean;
+      shape: string | null;
+    },
+  ) {
+    try {
+      await api(`/groups/${groupId}`, "PATCH", data);
       await silentReload();
     } catch (e) {
       setNotice((e as Error).message);
@@ -1239,6 +2283,11 @@ export default function App({
     } catch (e) {
       setNotice((e as Error).message);
     }
+  }
+  async function confirmRemoveSection() {
+    if (!pendingDeleteSection) return;
+    await deleteGroup(pendingDeleteSection.id);
+    setPendingDeleteSection(null);
   }
   function toggleFilter(filter: FilterKey) {
     const exclusiveGroups: FilterKey[][] = [
@@ -1292,6 +2341,18 @@ export default function App({
       deleteBookmarkDialog.current.close();
   }, [pendingDeleteBookmark]);
   useEffect(() => {
+    if (pendingDeleteCollection && !deleteCollectionDialog.current?.open)
+      deleteCollectionDialog.current?.showModal();
+    else if (!pendingDeleteCollection && deleteCollectionDialog.current?.open)
+      deleteCollectionDialog.current.close();
+  }, [pendingDeleteCollection]);
+  useEffect(() => {
+    if (pendingDeleteSection && !deleteSectionDialog.current?.open)
+      deleteSectionDialog.current?.showModal();
+    else if (!pendingDeleteSection && deleteSectionDialog.current?.open)
+      deleteSectionDialog.current.close();
+  }, [pendingDeleteSection]);
+  useEffect(() => {
     if (isProfileOpen) {
       setNameDraft(profile?.displayName || profile?.name || "");
       setCurrentPassword("");
@@ -1323,14 +2384,48 @@ export default function App({
     const timeout = setTimeout(() => setNotice(""), 4500);
     return () => clearTimeout(timeout);
   }, [notice]);
+  // Busca com debounce: espera o usuário parar de digitar por 300ms antes de
+  // consultar o servidor, em vez de uma requisição a cada tecla.
+  useEffect(() => {
+    if (searchTimer.current) window.clearTimeout(searchTimer.current);
+    const query = searchQuery.trim();
+    if (!query) {
+      setSearchResults([]);
+      setSearchBusy(false);
+      return;
+    }
+    setSearchBusy(true);
+    searchTimer.current = window.setTimeout(async () => {
+      try {
+        const data = await api(`/search?q=${encodeURIComponent(query)}`);
+        setSearchResults(data.results || []);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setSearchBusy(false);
+      }
+    }, 300);
+    return () => {
+      if (searchTimer.current) window.clearTimeout(searchTimer.current);
+    };
+  }, [searchQuery]);
+  useEffect(() => {
+    if (searchOpen && !searchDialog.current?.open) {
+      searchDialog.current?.showModal();
+    } else if (!searchOpen && searchDialog.current?.open) {
+      searchDialog.current.close();
+      setSearchQuery("");
+      setSearchResults([]);
+    }
+  }, [searchOpen]);
   function open(
     type: "collection" | "bookmark",
     data?: Partial<Draft>,
     lockedCollectionId = "",
   ) {
     setError("");
-    setConfirmDelete(false);
     setIconUrl("");
+    setNewSectionName("");
     fetchedMetadataUrl.current = "";
     setModalPosition({ x: 0, y: 0 });
     setLockedBookmarkCollectionId(
@@ -1523,23 +2618,6 @@ export default function App({
       setBusy(false);
     }
   }
-  async function remove() {
-    setBusy(true);
-    setError("");
-    try {
-      await api(
-        `/${kind === "collection" ? "collections" : "bookmarks"}/${draft.id}`,
-        "DELETE",
-      );
-      closeMainModal();
-      setNotice("Excluído com sucesso.");
-      await silentReload();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
   async function confirmRemoveBookmark() {
     if (!pendingDeleteBookmark) return;
     setBusy(true);
@@ -1550,6 +2628,24 @@ export default function App({
       // (excluir pela barra do ícone, ou pela lista de favicons dentro da
       // coleção, não deve abrir nem fechar nenhuma outra janela).
       if (kind === "bookmark" && draft.id === pendingDeleteBookmark.id)
+        closeMainModal();
+      setNotice("Excluído com sucesso.");
+      await silentReload();
+    } catch (e) {
+      setNotice((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function confirmRemoveCollection() {
+    if (!pendingDeleteCollection) return;
+    setBusy(true);
+    try {
+      await api(`/collections/${pendingDeleteCollection.id}`, "DELETE");
+      setPendingDeleteCollection(null);
+      // Mesma lógica do confirmRemoveBookmark: só fecha a janela de edição se
+      // ela estiver mesmo aberta nessa coleção.
+      if (kind === "collection" && draft.id === pendingDeleteCollection.id)
         closeMainModal();
       setNotice("Excluído com sucesso.");
       await silentReload();
@@ -2135,6 +3231,8 @@ export default function App({
               <section className="hero">
                 {!readOnly && (
                   <>
+                    {heroExpanded && (
+                    <>
                     <form className="search-bar" onSubmit={submitUrl}>
                       <Search size={21} />
                       <input
@@ -2181,6 +3279,14 @@ export default function App({
                         <SlidersHorizontal size={15} />
                         Filtrar
                       </button>
+                      <button
+                        type="button"
+                        disabled={loading || !!connectionError}
+                        onClick={() => setSearchOpen(true)}
+                      >
+                        <Search size={15} />
+                        Buscar
+                      </button>
                     </div>
                     {filterOpen && (
                       <div
@@ -2212,6 +3318,26 @@ export default function App({
                         )}
                       </div>
                     )}
+                    </>
+                    )}
+                    <button
+                      type="button"
+                      className="hero-toggle"
+                      aria-expanded={heroExpanded}
+                      aria-label={
+                        heroExpanded
+                          ? "Recolher busca e filtros"
+                          : "Expandir busca e filtros"
+                      }
+                      title={heroExpanded ? "Recolher" : "Expandir"}
+                      onClick={() => setHeroExpanded((value) => !value)}
+                    >
+                      {heroExpanded ? (
+                        <ChevronUp size={14} />
+                      ) : (
+                        <ChevronDown size={14} />
+                      )}
+                    </button>
                   </>
                 )}
               </section>
@@ -2220,28 +3346,70 @@ export default function App({
                   <h2>
                     {readOnly ? "Coleções públicas" : "Suas coleções"}
                     <span>{collections.length}</span>
-                    {!readOnly && (
-                      <button
-                        type="button"
-                        className="collections-frame-toggle"
-                        aria-pressed={toolbarsEnabled}
-                        aria-label={
-                          toolbarsEnabled
-                            ? "Desativar barras de ferramentas"
-                            : "Ativar barras de ferramentas"
-                        }
-                        title={
-                          toolbarsEnabled
-                            ? "Desativar barras de ferramentas"
-                            : "Ativar barras de ferramentas"
-                        }
-                        onClick={() => setToolbarsEnabled((value) => !value)}
-                      >
-                        <Pencil size={13} />
-                      </button>
-                    )}
                   </h2>
                 </div>
+                {!readOnly && (
+                  <div
+                    className="bulk-collections-toolbar"
+                    aria-label="Ações em todas as coleções"
+                  >
+                    <button
+                      type="button"
+                      className="collections-frame-toggle"
+                      aria-pressed={toolbarsEnabled}
+                      aria-label={
+                        toolbarsEnabled
+                          ? "Desativar barras de ferramentas"
+                          : "Ativar barras de ferramentas"
+                      }
+                      title={
+                        toolbarsEnabled
+                          ? "Desativar barras de ferramentas"
+                          : "Ativar barras de ferramentas"
+                      }
+                      onClick={() => setToolbarsEnabled((value) => !value)}
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void toggleAllCollections()}
+                      aria-label={
+                        allCollectionsExpanded
+                          ? "Recolher todas as coleções"
+                          : "Expandir todas as coleções"
+                      }
+                      title={
+                        allCollectionsExpanded
+                          ? "Recolher todas as coleções"
+                          : "Expandir todas as coleções"
+                      }
+                    >
+                      {allCollectionsExpanded ? (
+                        <ChevronUp size={13} />
+                      ) : (
+                        <ChevronDown size={13} />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={sortCollectionsAlphabetically}
+                      aria-label={`Ordenar as coleções de ${collectionsSortDirection === "asc" ? "Z a A" : "A a Z"}`}
+                      title={
+                        (collectionsSortDirection === "asc"
+                          ? "Ordenar de Z a A"
+                          : "Ordenar de A a Z") +
+                        " (só a ordem das coleções, não os itens de dentro)"
+                      }
+                    >
+                      {collectionsSortDirection === "desc" ? (
+                        <ArrowDownAZ size={13} />
+                      ) : (
+                        <ArrowUpAZ size={13} />
+                      )}
+                    </button>
+                  </div>
+                )}
                 <div className="library-meta">
                   <span>
                     {total} {total === 1 ? "favorito" : "favoritos"}
@@ -2298,11 +3466,14 @@ export default function App({
                       likedIds={likedIds}
                       bookmarkedIds={bookmarkedIds}
                       edit={() => open("collection", c)}
-                      remove={() => {
-                        open("collection", c);
-                        setConfirmDelete(true);
-                      }}
-                      add={() => open("bookmark", { collectionId: c.id }, c.id)}
+                      remove={() => setPendingDeleteCollection(c)}
+                      add={(groupId) =>
+                        open(
+                          "bookmark",
+                          { collectionId: c.id, groupId },
+                          c.id,
+                        )
+                      }
                       editBookmark={(bookmark) => open("bookmark", bookmark)}
                       removeBookmark={setPendingDeleteBookmark}
                       openBookmark={(bookmark) => registerUsage(bookmark.id)}
@@ -2310,11 +3481,42 @@ export default function App({
                       toggleBookmarked={toggleBookmarkBookmarked}
                       shareBookmark={shareBookmark}
                       toggleVisibility={toggleBookmarkVisibility}
-                      toggleBehavior={toggleCollectionBehavior}
+                      toggleBehavior={(c) =>
+                        c.id === "temporary-filter"
+                          ? setFilterExpanded((value) => !value)
+                          : toggleCollectionBehavior(c)
+                      }
                       createGroup={createGroup}
                       moveToGroup={moveToGroup}
+                      reorderBookmarks={reorderBookmarks}
                       renameGroup={renameGroup}
                       deleteGroup={deleteGroup}
+                      sectionsBulkAction={sectionsBulkAction}
+                      dragHandle={{
+                        dragging: draggedCollectionId === c.id,
+                        dragOver:
+                          dragOverCollectionId === c.id &&
+                          draggedCollectionId !== c.id,
+                        onDragStart: () => setDraggedCollectionId(c.id),
+                        onDragOver: () => {
+                          if (
+                            !draggedCollectionId ||
+                            draggedCollectionId === c.id ||
+                            c.id === "temporary-filter"
+                          )
+                            return;
+                          setDragOverCollectionId(c.id);
+                        },
+                        onDragLeave: () =>
+                          setDragOverCollectionId((id) =>
+                            id === c.id ? null : id,
+                          ),
+                        onDrop: () => handleCollectionDrop(c.id),
+                        onDragEnd: () => {
+                          setDraggedCollectionId(null);
+                          setDragOverCollectionId(null);
+                        },
+                      }}
                     />
                   ))
                 ) : (
@@ -2484,24 +3686,36 @@ export default function App({
                       <Lock size={16} />
                     )}
                   </button>
-                  {kind === "bookmark" && (
+                  {(kind === "bookmark" || kind === "collection") && (
                     <button
                       type="button"
                       className="danger-icon"
-                      aria-label="Excluir favorito"
+                      aria-label={`Excluir ${kind === "collection" ? "coleção" : "favorito"}`}
                       title="Excluir"
-                      onClick={() =>
-                        setPendingDeleteBookmark({
-                          id: draft.id as string,
-                          collectionId: draft.collectionId,
-                          name: draft.name,
-                          url: draft.url,
-                          description: draft.description,
-                          favicon: draft.favicon,
-                          color: draft.color,
-                          isPublic: draft.isPublic,
-                        })
-                      }
+                      onClick={() => {
+                        if (kind === "bookmark") {
+                          setPendingDeleteBookmark({
+                            id: draft.id as string,
+                            collectionId: draft.collectionId,
+                            name: draft.name,
+                            url: draft.url,
+                            description: draft.description,
+                            favicon: draft.favicon,
+                            color: draft.color,
+                            isPublic: draft.isPublic,
+                          });
+                        } else {
+                          // Não fecha o modal de edição (diferente do antigo
+                          // botão do rodapé): assim, se o usuário cancelar a
+                          // exclusão, volta pra cá — o modal nunca chegou a
+                          // sumir. confirmRemoveCollection() é quem fecha,
+                          // e só se a exclusão for confirmada de verdade.
+                          setPendingDeleteCollection({
+                            id: draft.id as string,
+                            name: draft.name,
+                          });
+                        }
+                      }}
                     >
                       <Trash2 size={16} />
                     </button>
@@ -2549,6 +3763,14 @@ export default function App({
                   maxLength={120}
                   value={draft.name}
                   onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                  onKeyDown={(e) => {
+                    // Editando um item já existente, Enter no meio da digitação
+                    // (ex: depois de selecionar o nome todo e reescrever) não
+                    // deve submeter o formulário inteiro e fechar o modal de
+                    // supetão — só o botão "Salvar alterações" faz isso. Pra
+                    // criar um item novo, Enter continua confirmando normalmente.
+                    if (e.key === "Enter" && draft.id) e.preventDefault();
+                  }}
                   placeholder={
                     kind === "collection"
                       ? "Ex.: Design e inspiração"
@@ -2641,6 +3863,74 @@ export default function App({
                       </p>
                     )}
                   </section>
+                  <section
+                    className="collection-bookmarks-editor"
+                    aria-labelledby="collection-sections-title"
+                  >
+                    <div className="collection-bookmarks-heading">
+                      <h3 id="collection-sections-title">Seções</h3>
+                      <span>{editingCollectionSections.length}</span>
+                    </div>
+                    {editingCollectionSections.length ? (
+                      <ul className="collection-bookmarks-list">
+                        {editingCollectionSections.map((section) => (
+                          <li
+                            key={section.id}
+                            className="collection-bookmark-row"
+                          >
+                            <span className="collection-bookmark-favicon">
+                              <span
+                                className="collection-section-dot"
+                                style={{ background: section.color }}
+                              />
+                            </span>
+                            <span className="collection-bookmark-name">
+                              {section.name}
+                            </span>
+                            <div className="collection-bookmark-actions">
+                              <button
+                                type="button"
+                                aria-label={`Excluir seção ${section.name}`}
+                                title="Excluir seção"
+                                onClick={() => setPendingDeleteSection(section)}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="help">
+                        Esta coleção ainda não tem seções.
+                      </p>
+                    )}
+                    <div className="collection-section-creator">
+                      <input
+                        type="text"
+                        maxLength={120}
+                        placeholder="Nome da nova seção"
+                        value={newSectionName}
+                        onChange={(e) => setNewSectionName(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={busy || !newSectionName.trim()}
+                        onClick={async () => {
+                          if (!draft.id) return;
+                          const created = await createSection(
+                            draft.id,
+                            newSectionName.trim(),
+                          );
+                          if (created) setNewSectionName("");
+                        }}
+                      >
+                        <Plus size={14} />
+                        Criar seção
+                      </button>
+                    </div>
+                  </section>
                   <div className="shape-options">
                     <span>Formato da Moldura</span>
                     <div>
@@ -2711,7 +4001,9 @@ export default function App({
                           setIsCollectionCreatorOpen(true);
                           return;
                         }
-                        setDraft({ ...draft, collectionId });
+                        // Trocar de coleção invalida a seção escolhida — ela
+                        // pertence só à coleção anterior, não à nova.
+                        setDraft({ ...draft, collectionId, groupId: null });
                       }}
                     >
                       <option value="" disabled>
@@ -2727,6 +4019,33 @@ export default function App({
                       </option>
                     </select>
                   </label>
+                  {(() => {
+                    const sections = (
+                      collections.find((c) => c.id === draft.collectionId)
+                        ?.groups || []
+                    ).filter((g) => g.display === "section");
+                    return (
+                      <label className="bookmark-collection">
+                        Seção <span className="optional">opcional</span>
+                        <select
+                          value={draft.groupId || ""}
+                          onChange={(e) =>
+                            setDraft({
+                              ...draft,
+                              groupId: e.target.value || null,
+                            })
+                          }
+                        >
+                          <option value="">Nenhuma (direto na coleção)</option>
+                          {sections.map((section) => (
+                            <option key={section.id} value={section.id}>
+                              {section.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    );
+                  })()}
                   {!collections.length && (
                     <p className="help">
                       Todo favorito precisa pertencer a uma coleção. Crie uma
@@ -2826,66 +4145,31 @@ export default function App({
                 {error}
               </p>
             )}
-            {confirmDelete ? (
-              <div className="delete-confirm">
-                <p>
-                  Excluir esta coleção e todos os seus favoritos? Esta ação
-                  não pode ser desfeita.
-                </p>
-                <button
-                  type="button"
-                  disabled={busy}
-                  className="danger"
-                  onClick={remove}
-                >
-                  Confirmar exclusão
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  className="secondary"
-                  onClick={() => setConfirmDelete(false)}
-                >
-                  Cancelar
-                </button>
-              </div>
-            ) : (
-              <div className="modal-footer">
-                {draft.id && kind === "collection" && (
-                  <button
-                    className="danger-text"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => setConfirmDelete(true)}
-                  >
-                    Excluir
-                  </button>
-                )}
-                <button
-                  className="secondary cancel"
-                  type="button"
-                  disabled={busy}
-                  onClick={closeMainModal}
-                >
-                  Cancelar
-                </button>
-                <button
-                  className="primary"
-                  type="submit"
-                  disabled={
-                    busy || (kind === "bookmark" && !draft.collectionId)
-                  }
-                >
-                  {busy
-                    ? "Salvando…"
-                    : draft.id
-                      ? "Salvar alterações"
-                      : kind === "collection"
-                        ? "Criar coleção"
-                        : "Salvar favorito"}
-                </button>
-              </div>
-            )}
+            <div className="modal-footer">
+              <button
+                className="secondary cancel"
+                type="button"
+                disabled={busy}
+                onClick={closeMainModal}
+              >
+                Cancelar
+              </button>
+              <button
+                className="primary"
+                type="submit"
+                disabled={
+                  busy || (kind === "bookmark" && !draft.collectionId)
+                }
+              >
+                {busy
+                  ? "Salvando…"
+                  : draft.id
+                    ? "Salvar alterações"
+                    : kind === "collection"
+                      ? "Criar coleção"
+                      : "Salvar favorito"}
+              </button>
+            </div>
           </form>
         </div>
         {notice && (
@@ -3074,6 +4358,168 @@ export default function App({
               disabled={busy}
               className="secondary"
               onClick={() => setPendingDeleteBookmark(null)}
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      </dialog>
+      <dialog
+        ref={deleteCollectionDialog}
+        className="confirm-dialog"
+        aria-labelledby="delete-collection-title"
+        onCancel={(e) => {
+          if (busy) e.preventDefault();
+          else setPendingDeleteCollection(null);
+        }}
+        onClick={(e) => {
+          if (e.target === deleteCollectionDialog.current && !busy)
+            setPendingDeleteCollection(null);
+        }}
+      >
+        <div className="modal-content">
+          <div className="modal-heading">
+            <h2 id="delete-collection-title">Excluir coleção</h2>
+            <button
+              className="icon-button"
+              type="button"
+              disabled={busy}
+              aria-label="Fechar modal"
+              onClick={() => setPendingDeleteCollection(null)}
+            >
+              <X size={20} />
+            </button>
+          </div>
+          <div className="delete-confirm">
+            <p>
+              Excluir "{pendingDeleteCollection?.name}" e todos os seus
+              favoritos? Esta ação não pode ser desfeita.
+            </p>
+            <button
+              type="button"
+              disabled={busy}
+              className="danger"
+              onClick={confirmRemoveCollection}
+            >
+              Confirmar exclusão
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              className="secondary"
+              onClick={() => setPendingDeleteCollection(null)}
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      </dialog>
+      <dialog
+        ref={searchDialog}
+        className="search-dialog"
+        aria-labelledby="search-dialog-title"
+        onCancel={() => setSearchOpen(false)}
+        onClick={(e) => {
+          if (e.target === searchDialog.current) setSearchOpen(false);
+        }}
+      >
+        <div className="modal-content">
+          <div className="modal-heading">
+            <h2 id="search-dialog-title">Buscar favoritos</h2>
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="Fechar modal"
+              onClick={() => setSearchOpen(false)}
+            >
+              <X size={20} />
+            </button>
+          </div>
+          <label className="search-dialog-field">
+            <Search size={16} />
+            <input
+              autoFocus
+              type="search"
+              placeholder="Nome, descrição ou URL do favorito…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </label>
+          <ul className="search-results">
+            {searchResults.map((bookmark) => (
+              <li key={bookmark.id} className="search-result-row">
+                <span className="search-result-favicon">
+                  {bookmark.favicon ? (
+                    <img src={bookmark.favicon} alt="" />
+                  ) : (
+                    <Globe2 size={16} />
+                  )}
+                </span>
+                <a
+                  className="search-result-info"
+                  href={bookmark.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => {
+                    registerUsage(bookmark.id);
+                    setSearchOpen(false);
+                  }}
+                >
+                  <strong>{bookmark.name}</strong>
+                  <span>{bookmark.collectionName}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+          {searchBusy && <p className="help">Buscando…</p>}
+          {!searchBusy && searchQuery.trim() && !searchResults.length && (
+            <p className="help">Nenhum favorito encontrado.</p>
+          )}
+        </div>
+      </dialog>
+      <dialog
+        ref={deleteSectionDialog}
+        className="confirm-dialog"
+        aria-labelledby="delete-section-title"
+        onCancel={() => setPendingDeleteSection(null)}
+        onClick={(e) => {
+          if (e.target === deleteSectionDialog.current)
+            setPendingDeleteSection(null);
+        }}
+      >
+        <div className="modal-content">
+          <div className="modal-heading">
+            <h2 id="delete-section-title">
+              {pendingDeleteSection?.display === "section"
+                ? "Excluir seção"
+                : "Excluir grupo"}
+            </h2>
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="Fechar modal"
+              onClick={() => setPendingDeleteSection(null)}
+            >
+              <X size={20} />
+            </button>
+          </div>
+          <div className="delete-confirm">
+            <p>
+              Excluir "{pendingDeleteSection?.name}"? Os favoritos que estão
+              nela não são apagados — só voltam a ficar fora de qualquer{" "}
+              {pendingDeleteSection?.display === "section" ? "seção" : "grupo"}.
+            </p>
+            <button
+              type="button"
+              className="danger"
+              onClick={() => void confirmRemoveSection()}
+            >
+              Confirmar exclusão
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setPendingDeleteSection(null)}
             >
               Cancelar
             </button>

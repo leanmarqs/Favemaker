@@ -18,6 +18,7 @@ export interface Bookmark {
   favicon: string;
   color: string;
   isPublic: boolean;
+  order?: number;
   createdAt?: string;
 }
 export interface BookmarkGroup {
@@ -25,6 +26,14 @@ export interface BookmarkGroup {
   collectionId: string;
   name: string;
   color: string;
+  description: string;
+  showName: boolean;
+  // null usa o formato da própria coleção — ver comentário no schema.prisma.
+  shape?: string | null;
+  // "tile": ícone único (App Library), criado ao arrastar um favorito sobre
+  // outro. "section": divisória com os favoritos visíveis direto, criada ao
+  // importar uma pasta aninhada — ver server/index.mjs (/api/import).
+  display: string;
   bookmarks: Bookmark[];
 }
 export interface Collection {
@@ -35,6 +44,7 @@ export interface Collection {
   isPublic: boolean;
   shape?: string;
   behavior?: string;
+  order?: number;
   bookmarks: Bookmark[];
   groups: BookmarkGroup[];
 }

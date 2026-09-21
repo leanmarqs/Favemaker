@@ -5,11 +5,21 @@ export const DEFAULT_BASE_URL = "http://localhost:3000";
 export const DEFAULT_COLOR = "#b9ee78";
 
 export async function getSettings() {
-  const { baseUrl, lastCollectionId } = await chrome.storage.local.get([
-    "baseUrl",
-    "lastCollectionId",
-  ]);
-  return { baseUrl: baseUrl || DEFAULT_BASE_URL, lastCollectionId: lastCollectionId || "" };
+  const { baseUrl, lastCollectionId, lastGroupId } =
+    await chrome.storage.local.get([
+      "baseUrl",
+      "lastCollectionId",
+      "lastGroupId",
+    ]);
+  return {
+    baseUrl: baseUrl || DEFAULT_BASE_URL,
+    lastCollectionId: lastCollectionId || "",
+    // Seção (dentro da coleção) escolhida pela última vez no popup — usada
+    // pelo menu de contexto pra salvar direto nela, igual já faz com a
+    // coleção. Só faz sentido junto com lastCollectionId: se a coleção mudar,
+    // quem chama isso é responsável por invalidar (ver popup.js).
+    lastGroupId: lastGroupId || "",
+  };
 }
 
 export async function setSettings(partial) {
@@ -51,6 +61,34 @@ export async function fetchCollections(baseUrl) {
   return data.collections || [];
 }
 
+export async function createCollection(baseUrl, name) {
+  return apiFetch(baseUrl, "/api/collections", {
+    method: "POST",
+    body: JSON.stringify({
+      name,
+      description: "",
+      color: DEFAULT_COLOR,
+      isPublic: false,
+    }),
+  });
+}
+
+// Mesma ideia do botão "Criar seção" no editor de coleção do site: nasce
+// vazia (bookmarkIds: []) — o favorito que estiver sendo salvo no momento é
+// associado a ela em seguida, via groupId em createBookmark.
+export async function createSection(baseUrl, collectionId, name) {
+  return apiFetch(baseUrl, "/api/groups", {
+    method: "POST",
+    body: JSON.stringify({
+      collectionId,
+      name,
+      color: DEFAULT_COLOR,
+      display: "section",
+      bookmarkIds: [],
+    }),
+  });
+}
+
 export async function createBookmark(baseUrl, bookmark) {
   return apiFetch(baseUrl, "/api/bookmarks", {
     method: "POST",
@@ -86,8 +124,15 @@ export async function resolveIcon(baseUrl, favicon, crop) {
 // Instagram, ...) bloqueiam ou servem uma página vazia pra requisições feitas
 // pelo SERVIDOR (sem og:image de verdade) — mas a página já carregada no
 // navegador tem os metadados certos, então lê-se direto dali como reforço.
-// Ordem de prioridade: poster do <video> > og:image > twitter:image > frame
-// capturado do vídeo em reprodução (só como último recurso, ver abaixo).
+// Ordem de prioridade: og:image > twitter:image > poster do <video> > frame
+// capturado do vídeo em reprodução (último recurso). og:image vem primeiro
+// porque é a escolha deliberada do próprio site pra representar a página —
+// confiar no poster de QUALQUER <video> na tela antes disso já causou bug de
+// verdade: numa grade de vídeos (lista de um canal, busca, feed), cada card
+// pode ter seu próprio <video poster> de pré-visualização (inclusive
+// carregado por um anúncio), e não tem como saber qual deles é "o" conteúdo
+// — só entra como prioridade mais alta quando a própria página não declara
+// nenhuma imagem (nem og:image nem twitter:image).
 function scrapeActiveImage() {
   const meta = (name) =>
     document.querySelector(`meta[property="${name}"]`)?.getAttribute("content") ||
@@ -101,11 +146,10 @@ function scrapeActiveImage() {
       return "";
     }
   };
-  // O poster do <video> em reprodução é literalmente a miniatura do vídeo
-  // específico que está na tela — mais confiável que og:image em sites que só
-  // atualizam esse meta tag na navegação inicial da SPA, não a cada vídeo.
   const poster = document.querySelector("video[poster]")?.getAttribute("poster");
-  const declared = toAbsolute(poster || meta("og:image") || meta("twitter:image"));
+  const declared = toAbsolute(
+    meta("og:image") || meta("twitter:image") || poster,
+  );
   if (declared) return declared;
   // Último recurso: nenhuma miniatura declarada em lugar nenhum (nem poster,
   // nem og:image/twitter:image) — tenta capturar o frame atual de um vídeo em

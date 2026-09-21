@@ -62,6 +62,6 @@ test("crop 'cover' recorta imagem retangular (og:image) em quadrado, sem letterb
   const output = await sharp(
     Buffer.from(result.favicon.split(",")[1], "base64"),
   ).metadata();
-  assert.equal(output.width, 128);
-  assert.equal(output.height, 128);
+  assert.equal(output.width, 256);
+  assert.equal(output.height, 256);
 });

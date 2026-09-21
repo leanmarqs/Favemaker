@@ -8,6 +8,21 @@ import { metadata, normalizeUrl, resolveImage } from "./metadata.mjs";
 import { parseBookmarksHtml, buildBookmarksHtml } from "./bookmarksFile.mjs";
 
 const prisma = new PrismaClient();
+// Índice funcional (GIN) pra buscar favoritos por nome/descrição/URL sem
+// precisar de uma coluna tsvector armazenada nem de migração — o Postgres já
+// casa esse índice com a mesma expressão usada em WHERE/ORDER BY na busca
+// (ver /api/search). "simple" (não "portuguese"/"english"): nomes de sites e
+// URLs não são texto corrido de verdade, então stemming de idioma atrapalha
+// mais do que ajuda aqui. Roda uma vez na subida do servidor; falha aqui não
+// derruba o servidor — só faz a busca ficar mais lenta até o índice existir.
+prisma
+  .$executeRawUnsafe(
+    `CREATE INDEX IF NOT EXISTS "Bookmark_search_idx" ON "Bookmark"
+     USING GIN (to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(description, '') || ' ' || coalesce(url, '')))`,
+  )
+  .catch((error) =>
+    console.error("Não foi possível criar o índice de busca:", error.message),
+  );
 export const app = express();
 const developmentOrigins = new Set([
   "http://localhost:3000",
@@ -55,14 +70,24 @@ app.use("/api", (req, res, next) => {
 app.get("/api/public/:id", async (req, res) => {
   const collections = await prisma.collection.findMany({
     where: { ownerId: req.params.id, isPublic: true },
+    // Sem isso, o Postgres não garante nenhuma ordem estável entre consultas
+    // — um UPDATE em qualquer coleção (ex: o chevron de expandir/recolher,
+    // que só mexe em "behavior") pode mudar a posição física da linha e fazer
+    // a coleção "pular" de lugar na lista, mesmo sem relação nenhuma com sua
+    // ordem de exibição. "order" é a posição escolhida (arrastar/"Ordenar
+    // A-Z"); createdAt é só o desempate pras que nunca foram reordenadas.
+    orderBy: [{ order: "asc" }, { createdAt: "asc" }],
     include: {
       bookmarks: {
         where: { isPublic: true, groupId: null },
-        orderBy: { createdAt: "asc" },
+        orderBy: [{ order: "asc" }, { createdAt: "asc" }],
       },
       groups: {
         include: {
-          bookmarks: { where: { isPublic: true }, orderBy: { createdAt: "asc" } },
+          bookmarks: {
+            where: { isPublic: true },
+            orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+          },
         },
       },
     },
@@ -71,12 +96,38 @@ app.get("/api/public/:id", async (req, res) => {
 });
 // Public profiles stay accessible; all personal routes below require a session.
 installAuth(app, prisma);
+// Busca por nome/descrição/URL nos favoritos do próprio dono — Postgres full
+// text search (to_tsvector/websearch_to_tsquery), sem depender de nenhum
+// serviço externo. websearch_to_tsquery aceita entrada de usuário "crua" (com
+// aspas, "-palavra", etc.) sem lançar erro em pontuação inesperada, diferente
+// de to_tsquery/plainto_tsquery — mais tolerante pra um campo de busca livre.
+app.get("/api/search", async (req, res) => {
+  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  if (!q || q.length > 200) return res.json({ results: [] });
+  const results = await prisma.$queryRaw`
+    SELECT b.id, b.name, b.url, b.description, b.favicon, b.color,
+           b."isPublic", b."collectionId", c.name AS "collectionName"
+    FROM "Bookmark" b
+    JOIN "Collection" c ON c.id = b."collectionId"
+    WHERE c."ownerId" = ${req.owner.id}
+      AND to_tsvector('simple', coalesce(b.name, '') || ' ' || coalesce(b.description, '') || ' ' || coalesce(b.url, ''))
+          @@ websearch_to_tsquery('simple', ${q})
+    ORDER BY ts_rank(
+      to_tsvector('simple', coalesce(b.name, '') || ' ' || coalesce(b.description, '') || ' ' || coalesce(b.url, '')),
+      websearch_to_tsquery('simple', ${q})
+    ) DESC
+    LIMIT 50
+  `;
+  res.json({ results });
+});
 app.get("/api/collections", async (req, res) => {
   const collections = await prisma.collection.findMany({
     where: { ownerId: req.owner.id },
+    // Ver comentário equivalente em /api/public/:id.
+    orderBy: [{ order: "asc" }, { createdAt: "asc" }],
     include: {
-      bookmarks: { where: { groupId: null }, orderBy: { createdAt: "asc" } },
-      groups: { include: { bookmarks: { orderBy: { createdAt: "asc" } } } },
+      bookmarks: { where: { groupId: null }, orderBy: [{ order: "asc" }, { createdAt: "asc" }] },
+      groups: { include: { bookmarks: { orderBy: [{ order: "asc" }, { createdAt: "asc" }] } } },
     },
   });
   res.json({ collections, ownerId: req.owner.id });
@@ -136,6 +187,13 @@ async function group(req, id) {
     throw Object.assign(new Error("Grupo não encontrado."), { status: 404 });
   return item;
 }
+// null = usa o formato da própria coleção (ver comentário no schema.prisma) —
+// diferente de shape(), que sempre resolve pra um valor real ("rounded" por
+// padrão), aqui a ausência de valor tem um significado próprio.
+function groupShape(body) {
+  if (!["circle", "square", "rounded"].includes(body.shape)) return null;
+  return body.shape;
+}
 function groupFields(body) {
   if (
     typeof body.name !== "string" ||
@@ -147,7 +205,21 @@ function groupFields(body) {
     });
   if (body.color !== undefined && !/^#[0-9a-f]{6}$/i.test(body.color))
     throw Object.assign(new Error("Cor inválida."), { status: 400 });
-  return { name: body.name.trim(), color: body.color || "#b9ee78" };
+  if (
+    body.description !== undefined &&
+    (typeof body.description !== "string" || body.description.length > 2000)
+  )
+    throw Object.assign(
+      new Error("A descrição deve ter até 2.000 caracteres."),
+      { status: 400 },
+    );
+  return {
+    name: body.name.trim(),
+    color: body.color || "#b9ee78",
+    description: typeof body.description === "string" ? body.description : "",
+    showName: Boolean(body.showName),
+    shape: groupShape(body),
+  };
 }
 app.post("/api/collections", async (req, res) =>
   res
@@ -164,6 +236,36 @@ app.post("/api/collections", async (req, res) =>
       }),
     ),
 );
+// Reordena a lista "Suas coleções" do dono — usada tanto por "Ordenar A-Z"
+// quanto por arrastar uma coleção pra outra posição. Precisa vir antes do
+// PATCH /api/collections/:id abaixo, senão "reorder" seria lido como um :id.
+app.patch("/api/collections/reorder", async (req, res) => {
+  const { orderedIds } = req.body;
+  if (
+    !Array.isArray(orderedIds) ||
+    !orderedIds.length ||
+    orderedIds.some((id) => typeof id !== "string")
+  )
+    throw Object.assign(new Error("Lista de coleções inválida."), {
+      status: 400,
+    });
+  await prisma.$transaction(async (tx) => {
+    const found = await tx.collection.findMany({
+      where: { id: { in: orderedIds }, ownerId: req.owner.id },
+      select: { id: true },
+    });
+    if (found.length !== orderedIds.length)
+      throw Object.assign(new Error("Uma ou mais coleções são inválidas."), {
+        status: 400,
+      });
+    await Promise.all(
+      orderedIds.map((id, index) =>
+        tx.collection.update({ where: { id }, data: { order: index } }),
+      ),
+    );
+  });
+  res.sendStatus(204);
+});
 app.patch("/api/collections/:id", async (req, res) => {
   await collection(req, req.params.id);
   res.json(
@@ -189,18 +291,79 @@ async function bookmarkFields(req) {
   } catch (e) {
     throw Object.assign(e, { status: 400 });
   }
-  return {
+  const result = {
     ...data,
     url,
     favicon: icon.favicon,
     collectionId: req.body.collectionId,
   };
+  // groupId só entra no update quando o corpo realmente manda essa chave (ex:
+  // "adicionar favorito" a partir de uma seção específica) — se não vier, o
+  // grupo atual do favorito (se houver) fica intocado, como já era o
+  // comportamento do formulário normal de edição, que não mexe em grupo.
+  if (req.body.groupId !== undefined) {
+    if (req.body.groupId === null) {
+      result.groupId = null;
+    } else {
+      const target = await group(req, req.body.groupId);
+      if (target.collectionId !== req.body.collectionId)
+        throw Object.assign(new Error("O grupo pertence a outra coleção."), {
+          status: 400,
+        });
+      result.groupId = target.id;
+    }
+  }
+  return result;
 }
 app.post("/api/bookmarks", async (req, res) =>
   res
     .status(201)
     .json(await prisma.bookmark.create({ data: await bookmarkFields(req) })),
 );
+// Reordena (e opcionalmente move de grupo) uma lista inteira de favoritos de
+// uma vez — usada ao arrastar um ícone para uma posição específica da lista
+// (entre dois outros) ou para dentro de uma seção. O cliente manda a lista
+// completa já na ordem final do destino (com o item arrastado já incluído);
+// só o container de chegada precisa ser reenumerado, o de origem (se
+// diferente) mantém seus valores de `order` como estavam. Precisa vir antes
+// do middleware `/api/bookmarks/:id` abaixo, senão "reorder" seria lido como
+// um :id de favorito e cairia num 404.
+app.patch("/api/bookmarks/reorder", async (req, res) => {
+  const { collectionId, orderedIds } = req.body;
+  const groupId = req.body.groupId === undefined ? null : req.body.groupId;
+  await collection(req, collectionId);
+  if (groupId !== null) {
+    const target = await group(req, groupId);
+    if (target.collectionId !== collectionId)
+      throw Object.assign(new Error("O grupo pertence a outra coleção."), {
+        status: 400,
+      });
+  }
+  if (
+    !Array.isArray(orderedIds) ||
+    !orderedIds.length ||
+    orderedIds.some((id) => typeof id !== "string")
+  )
+    throw Object.assign(new Error("Lista de favoritos inválida."), {
+      status: 400,
+    });
+  await prisma.$transaction(async (tx) => {
+    const found = await tx.bookmark.findMany({
+      where: { id: { in: orderedIds }, collectionId },
+      select: { id: true },
+    });
+    if (found.length !== orderedIds.length)
+      throw Object.assign(new Error("Um ou mais favoritos são inválidos."), {
+        status: 400,
+      });
+    await Promise.all(
+      orderedIds.map((id, index) =>
+        tx.bookmark.update({ where: { id }, data: { groupId, order: index } }),
+      ),
+    );
+  });
+  res.sendStatus(204);
+});
 app.use("/api/bookmarks/:id", async (req, res, next) => {
   const item = await prisma.bookmark.findFirst({
     where: { id: req.params.id, collection: { ownerId: req.owner.id } },
@@ -247,25 +410,32 @@ app.patch("/api/bookmarks/:id/move", async (req, res) => {
 app.post("/api/groups", async (req, res) => {
   const col = await collection(req, req.body.collectionId);
   const data = groupFields(req.body);
+  // "section" pode nascer vazia (o usuário ainda vai adicionar favoritos por
+  // ela, pelo "+" da própria seção) — "tile" continua exigindo pelo menos dois,
+  // já que ele nasce de arrastar um ícone sobre outro.
+  const display = req.body.display === "section" ? "section" : "tile";
   const bookmarkIds = Array.isArray(req.body.bookmarkIds)
     ? req.body.bookmarkIds
     : [];
-  if (bookmarkIds.length < 2)
+  if (bookmarkIds.length < (display === "section" ? 0 : 2))
     throw Object.assign(new Error("Selecione ao menos dois favoritos."), {
       status: 400,
     });
   const created = await prisma.$transaction(async (tx) => {
     const grp = await tx.bookmarkGroup.create({
-      data: { ...data, collectionId: col.id },
+      data: { ...data, display, collectionId: col.id },
     });
-    const { count } = await tx.bookmark.updateMany({
-      where: { id: { in: bookmarkIds }, collectionId: col.id },
-      data: { groupId: grp.id },
-    });
-    if (count !== bookmarkIds.length)
-      throw Object.assign(new Error("Um ou mais favoritos são inválidos."), {
-        status: 400,
+    if (bookmarkIds.length) {
+      const { count } = await tx.bookmark.updateMany({
+        where: { id: { in: bookmarkIds }, collectionId: col.id },
+        data: { groupId: grp.id },
       });
+      if (count !== bookmarkIds.length)
+        throw Object.assign(
+          new Error("Um ou mais favoritos são inválidos."),
+          { status: 400 },
+        );
+    }
     return tx.bookmarkGroup.findUnique({
       where: { id: grp.id },
       include: { bookmarks: true },
@@ -413,11 +583,16 @@ app.post("/api/import", async (req, res) => {
       if (child.type === "bookmark") {
         await importBookmarkNode(child, col.id, null);
       } else if (child.type === "folder") {
+        // "section" em vez do "tile" padrão: uma pasta importada vira uma divisória
+        // com os favoritos visíveis direto na coleção, não escondidos atrás de um
+        // ícone só (esse continua reservado pro agrupamento manual, arrastando um
+        // favorito sobre outro).
         const grp = await prisma.bookmarkGroup.create({
           data: {
             name: child.name.slice(0, 120),
             color: "#b9ee78",
             collectionId: col.id,
+            display: "section",
           },
         });
         groups++;
@@ -442,9 +617,11 @@ app.post("/api/import", async (req, res) => {
 app.get("/api/export", async (req, res) => {
   const collections = await prisma.collection.findMany({
     where: { ownerId: req.owner.id },
+    // Ver comentário equivalente em /api/public/:id.
+    orderBy: [{ order: "asc" }, { createdAt: "asc" }],
     include: {
-      bookmarks: { where: { groupId: null }, orderBy: { createdAt: "asc" } },
-      groups: { include: { bookmarks: { orderBy: { createdAt: "asc" } } } },
+      bookmarks: { where: { groupId: null }, orderBy: [{ order: "asc" }, { createdAt: "asc" }] },
+      groups: { include: { bookmarks: { orderBy: [{ order: "asc" }, { createdAt: "asc" }] } } },
     },
   });
   const html = buildBookmarksHtml(collections);

@@ -63,7 +63,7 @@ const CRAWLER_UA =
   "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)";
 // Faz a requisição de fato fixada num único IP já validado (proteção contra
 // DNS rebinding: nunca deixa o socket resolver o hostname de novo).
-function fetchAddress(url, address, timeoutMs, userAgent) {
+function fetchAddress(url, address, timeoutMs, userAgent, truncate) {
   return new Promise((resolve, reject) => {
     const req = (url.protocol === "https:" ? https : http).get(
       url,
@@ -79,9 +79,27 @@ function fetchAddress(url, address, timeoutMs, userAgent) {
         let size = 0;
         res.on("data", (chunk) => {
           size += chunk.length;
-          if (size > 2 * 1024 * 1024)
-            req.destroy(new Error("Arquivo muito grande."));
-          else chunks.push(chunk);
+          if (size > 2 * 1024 * 1024) {
+            if (truncate) {
+              // Só o <head> importa pra og:title/og:image/favicon — corta o
+              // download aqui em vez de falhar a página inteira. Sem isso,
+              // páginas legítimas mas pesadas (ex.: um canal do YouTube passa
+              // de 2MB só de JSON embutido que não usamos) nunca tinham
+              // metadado nenhum extraído, mesmo com og:title/og:image logo
+              // no começo do HTML.
+              res.destroy();
+              resolve({
+                status: res.statusCode,
+                headers: res.headers,
+                buffer: Buffer.concat(chunks),
+                url: url.href,
+              });
+            } else {
+              req.destroy(new Error("Arquivo muito grande."));
+            }
+            return;
+          }
+          chunks.push(chunk);
         });
         res.on("error", reject);
         res.on("end", () =>
@@ -103,7 +121,14 @@ function fetchAddress(url, address, timeoutMs, userAgent) {
   });
 }
 // Resolve e fixa o IP em cada requisição, inclusive após redirecionamentos.
-export async function safeFetch(value, redirects = 0, userAgent = DEFAULT_UA) {
+// truncate: usado só pelo fetch de HTML pra extrair metadados (fetchDocument)
+// — nunca pra baixar imagens (resolveImage precisa dos bytes completos).
+export async function safeFetch(
+  value,
+  redirects = 0,
+  userAgent = DEFAULT_UA,
+  truncate = false,
+) {
   if (redirects > 3) throw new Error("Muitos redirecionamentos.");
   const url = new URL(value);
   if (
@@ -132,6 +157,7 @@ export async function safeFetch(value, redirects = 0, userAgent = DEFAULT_UA) {
         ordered[i],
         i === ordered.length - 1 ? 4500 : 2500,
         userAgent,
+        truncate,
       );
       break;
     } catch (error) {
@@ -143,6 +169,7 @@ export async function safeFetch(value, redirects = 0, userAgent = DEFAULT_UA) {
       new URL(result.headers.location, url).href,
       redirects + 1,
       userAgent,
+      truncate,
     );
   if (result.status !== 200)
     throw new Error("Não foi possível consultar o site.");
@@ -205,11 +232,11 @@ export async function resolveImage(value, options) {
 // e o resultado original — que pode ter vindo com mais dados que o do crawler
 // em sites que servem menos conteúdo pra bots — é mantido).
 async function fetchDocument(url) {
-  const page = await safeFetch(url);
+  const page = await safeFetch(url, 0, DEFAULT_UA, true);
   const $ = load(page.buffer.toString("utf8"));
   if ($('meta[property="og:title"]').attr("content")) return { page, $ };
   try {
-    const retried = await safeFetch(url, 0, CRAWLER_UA);
+    const retried = await safeFetch(url, 0, CRAWLER_UA, true);
     const $retried = load(retried.buffer.toString("utf8"));
     if ($retried('meta[property="og:title"]').attr("content"))
       return { page: retried, $: $retried };
@@ -297,11 +324,20 @@ export async function metadata(value) {
   const images = await Promise.allSettled(
     attempts.map((a) => resolveImage(a.url, { crop: a.crop })),
   );
-  const found = images.find((r) => r.status === "fulfilled");
+  const foundIndex = images.findIndex((r) => r.status === "fulfilled");
+  const found = foundIndex >= 0 ? images[foundIndex] : undefined;
+  // A extensão usa isso pra decidir se vale a pena reforçar a imagem lendo o
+  // DOM da aba ativa: quando o servidor já conseguiu a imagem de conteúdo
+  // (og:image) buscando a página do zero, esse resultado é mais confiável do
+  // que o DOM ao vivo, que pode estar com meta tags desatualizadas depois de
+  // uma navegação client-side dentro de uma SPA (o site só garante atualizar
+  // isso numa recarga completa) — ver popup.js na extensão.
+  const usedContentImage = Boolean(contentImage) && foundIndex === 0;
   return {
     url,
     name: title.slice(0, 120),
     description: description.slice(0, 2000),
+    usedContentImage,
     ...(found?.value || { favicon: "", color: "#a3b99a" }),
   };
 }

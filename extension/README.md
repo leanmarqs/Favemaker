@@ -15,18 +15,30 @@ sem precisar copiar link e colar no app.
 ## Como usar
 
 - **Clique no ícone da extensão** → mostra um preview (ícone, nome, descrição)
-  da página atual, editável, com a coleção → **Salvar no Pinicon**. Nome e
-  descrição vêm do mesmo `POST /api/metadata` usado pela barra de busca do site
-  e pelo menu de contexto (ver abaixo) — inclusive já prioriza a imagem do
-  conteúdo específico (`og:image`) sobre o favicon do site quando a página não
-  é a home. A imagem ainda passa por um segundo reforço, lida direto da aba já
-  aberta no navegador (ver "Como funciona"), pra funcionar também em sites que
-  bloqueiam esse fetch quando ele vem do servidor.
+  da página atual, editável, com a coleção e a seção → **Salvar no Pinicon**.
+  Nome e descrição vêm do mesmo `POST /api/metadata` usado pela barra de busca
+  do site e pelo menu de contexto (ver abaixo) — inclusive já prioriza a
+  imagem do conteúdo específico (`og:image`) sobre o favicon do site quando a
+  página não é a home. A imagem ainda passa por um segundo reforço, lida
+  direto da aba já aberta no navegador (ver "Como funciona"), pra funcionar
+  também em sites que bloqueiam esse fetch quando ele vem do servidor. Trocar
+  de coleção sempre limpa a seção selecionada, já que uma seção pertence a uma
+  coleção só.
+  - Os dois seletores têm uma opção **"+ Nova coleção…"**/**"+ Nova
+    seção…"** que abre um campo de nome + botão "Criar" ali mesmo, sem sair
+    do popup. A seção criada é sempre vinculada à coleção escolhida no
+    momento — sem uma coleção de verdade selecionada (ex.: o criador de
+    coleção ainda aberto, sem ter confirmado nada), a seção não é criada e o
+    popup avisa em vez de falhar silenciosamente.
 - **Botão direito em cima de um link (não em qualquer espaço da página)** →
-  **Salvar no Pinicon** → salva direto na coleção configurada no popup
-  (a última escolhida ali), sem abrir aba nem modal — só uma notificação do
-  sistema confirmando "Salvo no Pinicon" (ou o erro, se algo falhar). A URL
-  salva é a do link clicado, não a da página onde está o link.
+  **Salvar no Pinicon** → salva direto na coleção (e na seção, se alguma
+  estiver escolhida) configuradas no popup, sem abrir aba nem modal — só uma
+  notificação do sistema confirmando "Salvo no Pinicon" (ou o erro, se algo
+  falhar). A URL salva é a do link clicado, não a da página onde está o link.
+  Antes de usar a seção lembrada, a extensão confirma que ela ainda existe e
+  ainda pertence à coleção padrão atual — se a seção foi excluída ou a
+  coleção padrão mudou nesse meio-tempo, salva direto na coleção em vez de
+  falhar com um erro de "seção não encontrada".
 
 Se a extensão não encontrar sessão logada, o popup mostra um botão para abrir
 o Pinicon; pelo menu de contexto, se a sessão não estiver logada ou nenhuma
@@ -43,12 +55,19 @@ salvar silenciosamente errado.
   sociais, ex: TikTok) podem não ter nome/descrição — nesse caso o popup mostra
   "prévia indisponível" (sem opção de salvar por ali) e o menu de contexto
   notifica o erro.
-- **Só no popup**, depois desse fetch, a imagem ganha um reforço: a extensão lê
-  `og:image`/`twitter:image`/o `poster` de um `<video>` em reprodução direto do
-  DOM da aba já carregada (`chrome.scripting.executeScript`, função
-  `scrapeActiveImage` em `shared.js`) e, se achar algo, troca a imagem do
-  `/api/metadata` por essa — funciona mesmo em sites que bloqueiam o fetch do
-  servidor, porque o navegador já renderizou a página de verdade. Essa imagem
+- **Só no popup**, e só quando o servidor NÃO conseguiu uma imagem de
+  conteúdo (`usedContentImage: false` na resposta do `/api/metadata`), a
+  imagem ganha um reforço: a extensão lê `og:image`/`twitter:image`/o `poster`
+  de um `<video>` em reprodução direto do DOM da aba já carregada
+  (`chrome.scripting.executeScript`, função `scrapeActiveImage` em
+  `shared.js`) e, se achar algo, troca a imagem do `/api/metadata` por essa —
+  funciona mesmo em sites que bloqueiam o fetch do servidor, porque o
+  navegador já renderizou a página de verdade. Quando o servidor JÁ conseguiu
+  a imagem de conteúdo, esse reforço é pulado de propósito: o fetch fresco do
+  servidor pra URL atual é mais confiável que o DOM da aba, que pode estar com
+  meta tags desatualizadas depois de uma navegação client-side dentro de uma
+  SPA — foi exatamente isso que causava o avatar de canal do YouTube ficar
+  "grudado" no anterior até um F5 na página. Essa imagem
   é resolvida com recorte quadrado centralizado (`crop: "cover"`, o mesmo usado
   pelo servidor para thumbnails de conteúdo), melhor pra capturas de vídeo/post
   do que o encolhimento simples usado em favicons. Se nem isso existir (nem
@@ -57,9 +76,16 @@ salvar silenciosamente errado.
   só funciona se o vídeo já tiver dados carregados (senão sai um frame preto) e
   não tiver proteção CORS/DRM (nesse caso falha silenciosamente e mantém o que
   já veio do `/api/metadata`).
-- Ela então chama a API que já existe: `GET /api/collections` e
-  `POST /api/bookmarks` — o próprio servidor baixa e converte a imagem
-  (`resolveImage`), igual já faz para o avatar.
+- Ela então chama a API que já existe: `GET /api/collections` (que já devolve
+  as seções de cada coleção, dentro de `groups`, filtradas por
+  `display === "section"` no próprio popup/background — o "tile", agrupamento
+  manual do site, não é um destino válido aqui), `POST /api/collections` e
+  `POST /api/groups` (essas duas pras opções "+ Nova coleção…"/"+ Nova
+  seção…" do popup — a seção já nasce com `display: "section"` e sem nenhum
+  favorito, igual o botão "Criar seção" do editor de coleção no site) e
+  `POST /api/bookmarks`, passando o `groupId` da seção escolhida — o próprio
+  servidor baixa e converte a imagem (`resolveImage`), igual já faz para o
+  avatar.
 - Autenticação: como `pinicon_session` é um cookie `HttpOnly`, a extensão lê seu
   valor via `chrome.cookies.get` (permitido para extensões com
   `host_permissions` na origem) e o envia no header `X-Pinicon-Session` — por

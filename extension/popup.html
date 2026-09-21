@@ -41,6 +41,33 @@
           Coleção
           <select id="collection-select"></select>
         </label>
+        <div class="inline-creator hidden" id="collection-creator">
+          <input
+            type="text"
+            id="new-collection-name"
+            maxlength="120"
+            placeholder="Nome da nova coleção"
+          />
+          <button type="button" id="create-collection-btn" class="secondary">
+            Criar
+          </button>
+        </div>
+
+        <label class="field" id="section-field">
+          Seção <span class="optional">opcional</span>
+          <select id="section-select"></select>
+        </label>
+        <div class="inline-creator hidden" id="section-creator">
+          <input
+            type="text"
+            id="new-section-name"
+            maxlength="120"
+            placeholder="Nome da nova seção"
+          />
+          <button type="button" id="create-section-btn" class="secondary">
+            Criar
+          </button>
+        </div>
 
         <button id="save-now" type="button" class="primary">
           Salvar no Pinicon

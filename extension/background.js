@@ -1,4 +1,10 @@
-import { getSettings, fetchMe, fetchMetadata, createBookmark } from "./shared.js";
+import {
+  getSettings,
+  fetchMe,
+  fetchMetadata,
+  fetchCollections,
+  createBookmark,
+} from "./shared.js";
 
 const MENU_ID = "pinicon-save-page";
 
@@ -25,7 +31,7 @@ function notify(title, message) {
 // prioriza a imagem do conteúdo específico (og:image) sobre o favicon do
 // site quando o link não é a home.
 async function handleSave(linkUrl) {
-  const { baseUrl, lastCollectionId } = await getSettings();
+  const { baseUrl, lastCollectionId, lastGroupId } = await getSettings();
   if (!lastCollectionId) {
     notify("Pinicon", "Abra a extensão e escolha uma coleção padrão antes de salvar.");
     return;
@@ -36,6 +42,19 @@ async function handleSave(linkUrl) {
       notify("Pinicon", "Faça login no Pinicon no navegador antes de salvar.");
       return;
     }
+    // Confirma que a seção lembrada ainda existe e ainda é dessa mesma
+    // coleção antes de usá-la — evita mandar um groupId órfão (a seção pode
+    // ter sido excluída, ou a coleção padrão pode ter mudado) pro servidor,
+    // que rejeitaria a criação do favorito inteiro por causa disso.
+    let groupId = null;
+    if (lastGroupId) {
+      const collections = await fetchCollections(baseUrl);
+      const collection = collections.find((c) => c.id === lastCollectionId);
+      const section = collection?.groups?.find(
+        (g) => g.id === lastGroupId && g.display === "section",
+      );
+      if (section) groupId = section.id;
+    }
     const data = await fetchMetadata(baseUrl, linkUrl);
     await createBookmark(baseUrl, {
       name: (data.name || "Sem título").slice(0, 120),
@@ -45,6 +64,7 @@ async function handleSave(linkUrl) {
       url: data.url || linkUrl,
       favicon: data.favicon,
       collectionId: lastCollectionId,
+      groupId,
     });
     notify("Salvo no Pinicon", data.name || linkUrl);
   } catch (error) {

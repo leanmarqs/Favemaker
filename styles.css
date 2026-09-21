@@ -473,6 +473,23 @@ h1 > span {
   color: var(--muted);
   margin: 0;
 }
+/* Recolhe a busca + "Nova coleção" + "Filtrar" — fica sempre visível (mesmo
+   com o bloco recolhido) pra poder trazer tudo de volta. */
+.hero-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-top: 14px;
+  border-radius: 50%;
+  color: var(--muted);
+  background: var(--raised);
+  border: 1px solid var(--border);
+}
+.hero-toggle:hover {
+  color: var(--text);
+}
 .mobile-break {
   display: none;
 }
@@ -600,21 +617,14 @@ textarea::placeholder {
   padding: 24px;
   margin-bottom: 48px;
 }
-.collections-frame-toggle {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  color: var(--muted);
-  background: var(--raised);
-  border: 1px solid var(--border);
-}
-.collections-frame-toggle:hover {
-  color: var(--text);
-}
+/* Mora dentro de ".bulk-collections-toolbar" (mesmo tamanho/formato/hover dos
+   outros ícones dali) — só o estado "ligado" precisa de estilo próprio. */
 .collections-frame-toggle[aria-pressed="true"] {
   color: var(--accent-ink);
   background: var(--accent);
-  border-color: var(--accent);
+}
+.collections-frame-toggle[aria-pressed="true"]:hover {
+  background: var(--accent);
 }
 .section-kicker {
   font-size: 8px;
@@ -705,6 +715,23 @@ h3 {
   color: var(--muted);
   margin: 0 13px 12px;
 }
+/* Sem seções: invisível — o pill mantém a própria borda/fundo, exatamente como
+   antes. Com seções: passa a ser ELA quem desenha a borda/fundo/sombra ao
+   redor de tudo (pill + seções), e o pill perde a própria (fica "por dentro"
+   do frame) — assim as seções ficam visualmente dentro do mesmo cartão da
+   coleção, em vez de soltas abaixo dele. */
+.collection-frame.has-sections {
+  border: 1px solid var(--border);
+  border-radius: 30px;
+  background: linear-gradient(120deg, var(--surface), var(--bg));
+  box-shadow: var(--shadow);
+  padding-bottom: 16px;
+}
+.collection-frame.has-sections .pill {
+  border: none;
+  background: none;
+  box-shadow: none;
+}
 .pill {
   position: relative;
   border-radius: 70px;
@@ -716,17 +743,6 @@ h3 {
   gap: 10px;
   min-height: 82px;
   box-shadow: var(--shadow);
-  transition: padding-top 220ms ease;
-}
-/* Abre espaço no topo do pill pra barra da coleção não cobrir os ícones: o
-   valor cobre a margem acima dela (16px) + a altura da própria barra (30px) +
-   a margem abaixo, antes dos ícones (16px). Só quando a própria barra da
-   coleção está aberta (modo de edição ligado) — o cartão de prévia e a barra
-   de um favorito específico flutuam por cima do conteúdo (via z-index) em vez
-   de precisar de espaço reservado, então não devem esticar o container.
-   */
-.collection.toolbar-open .pill {
-  padding-top: 62px;
 }
 .pill.is-expanded {
   min-height: 0;
@@ -737,10 +753,13 @@ h3 {
   align-content: center;
   row-gap: 14px;
 }
+/* Barra da coleção (expandir/ordenar/adicionar/editar/excluir): fica na mesma
+   linha do nome/contagem, fora do container (ver .collection-heading) — some
+   junto com o modo de edição por estar só montada condicionalmente no React,
+   não precisa de transição própria de opacidade/posição. A barra de um
+   favorito específico (.favorite-controls) continua flutuando por cima do
+   ícone, com posição calculada em JS a partir do item passado o mouse. */
 .collection-controls {
-  position: absolute;
-  z-index: 2;
-  left: 50%;
   display: flex;
   align-items: center;
   gap: 1px;
@@ -750,36 +769,29 @@ h3 {
   background: var(--raised);
   box-shadow: 0 10px 28px #0006;
   backdrop-filter: blur(12px);
+  flex-shrink: 0;
+}
+.collection-controls.favorite-controls {
+  position: absolute;
+  /* Acima do ".group-expand-anchor" (11) e do ".sticky-header" (10): precisa
+     aparecer por cima mesmo quando o ícone que a disparou está dentro do
+     painel expandido de um grupo, ou perto do topo da página. */
+  z-index: 12;
+  left: 50%;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
+  transform: translate(-50%, -100%) scale(0.94);
   transition:
     opacity 180ms ease,
     transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
     visibility 180ms;
 }
-/* Barra da coleção (expandir/ordenar/adicionar/editar/excluir): fica dentro do
-   próprio pill, colada no topo e centralizada — some junto com o modo de edição
-   em vez de depender de hover. A barra de um favorito específico (.favorite-controls)
-   usa posição própria (calculada em JS a partir do item passado o mouse), então
-   fica de fora dessa regra. */
-.collection-controls:not(.favorite-controls) {
-  top: 16px;
-  transform: translate(-50%, 0) scale(0.94);
-}
-.collection.has-visible-toolbar .collection-controls:not(.favorite-controls) {
-  transform: translate(-50%, 0) scale(1);
-}
-.collection-controls.favorite-controls {
-  transform: translate(-50%, -100%) scale(0.94);
-}
 .collection.has-visible-toolbar .collection-controls.favorite-controls {
-  transform: translate(-50%, -100%) scale(1);
-}
-.collection.has-visible-toolbar .collection-controls {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
+  transform: translate(-50%, -100%) scale(1);
 }
 .collection-controls button {
   width: 24px;
@@ -798,6 +810,63 @@ h3 {
   color: #f09b9b;
   background: #b73c3c22;
 }
+/* Alça pra arrastar a própria coleção e reordenar a lista "Suas coleções".
+   É um <span role="button"> (não <button>) de propósito: o Chromium não
+   reconhece de forma confiável um gesto de arrastar iniciado num <button>
+   nativo — o próprio "mousedown" do botão compete com a detecção de drag do
+   navegador. O visual continua igual aos outros ícones da mesma barra
+   (".collection-controls button"), só que repetido aqui porque esse seletor
+   não alcança um <span>. */
+.drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: var(--muted);
+  cursor: grab;
+}
+.drag-handle:hover {
+  color: var(--text);
+  background: var(--raised);
+}
+.drag-handle:active,
+.drag-handle.is-dragging {
+  cursor: grabbing;
+}
+/* Contorno tracejado na coleção-alvo enquanto outra é arrastada por cima —
+   mesma linguagem visual do ".drop-target" dos favoritos. */
+.collection.drop-target-collection {
+  outline: 2px dashed var(--accent);
+  outline-offset: 6px;
+  border-radius: 16px;
+}
+/* Barra de ações que afetam TODAS as coleções de uma vez (expandir/recolher
+   tudo, ordenar A-Z) — só aparece com o lápis ligado, centralizada na mesma
+   linha de "Suas coleções" graças ao space-between de ".library-heading". */
+.bulk-collections-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--raised);
+}
+.bulk-collections-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: var(--muted);
+}
+.bulk-collections-toolbar button:hover {
+  color: var(--text);
+  background: var(--bg);
+}
 /* Cartão de prévia ao estilo Netflix (hover de 1s sobre um ícone, com o modo de
    edição desligado): a "capa" cresce a partir do próprio ícone, como se ele se
    ampliasse virando o card, em vez de um tooltip flutuando separado.
@@ -808,7 +877,8 @@ h3 {
    ao redor do lugar onde o ícone estava, e não a partir do canto do card. */
 .favorite-preview-anchor {
   position: absolute;
-  z-index: 4;
+  /* Mesmo motivo do z-index de ".favorite-controls" acima. */
+  z-index: 12;
   left: 0;
   top: 0;
   transform: translate(-50%, -65px);
@@ -975,7 +1045,12 @@ h3 {
   min-width: 0;
   display: grid;
   grid-template-columns: repeat(10, minmax(0, 1fr));
-  align-items: center;
+  /* "start" (não "center"): um grupo com "Exibir nome" ligado fica mais alto
+     que um favorito comum (o rótulo embaixo soma altura) — centralizado, isso
+     empurrava os favoritos mais baixos (mais curtos) pra baixo, desalinhando
+     os topos dos ícones numa mesma linha. Começando os dois pelo topo, o
+     rótulo extra só estica a célula pra baixo, sem mexer na posição do ícone. */
+  align-items: start;
   justify-items: center;
   gap: clamp(3px, 0.8vw, 11px);
   padding: 0 7px;
@@ -1136,12 +1211,109 @@ h3 {
   padding: 3px 4px;
   color: var(--text);
 }
+/* "Exibir nome" (grupo): rótulo visível embaixo do tile, em vez do texto só
+   pro leitor de tela (.sr-only) usado quando essa opção está desligada. Bloco
+   (não inline) pra sempre quebrar numa linha nova abaixo do ícone, que é
+   inline-flex — sem precisar virar ".favorite" inteiro num flex column. */
+.favorite-name {
+  display: block;
+  margin-top: 9px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  white-space: normal;
+  overflow-wrap: break-word;
+  max-width: 100%;
+}
+.group-tile.is-expanded {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+/* Painel que "brota" do próprio tile ao clicar nele sem o lápis ligado —
+   mesma técnica de ancoragem do cartão de prévia (x/y do ícone, calculados em
+   JS, relativos ao ".favorite-anchor" mais próximo) e a mesma animação de
+   crescer a partir do ícone, só que mostrando todos os favoritos do grupo em
+   vez de um card só. */
+.group-expand-anchor {
+  position: absolute;
+  /* Acima do ".sticky-header" (z-index 10): pra um tile perto do topo da
+     página, o painel cresce pra cima e não pode ficar atrás dele. */
+  z-index: 11;
+  left: 0;
+  top: 0;
+  /* -100%: o próprio ponto de ancoragem (x, o centro do tile; y, o topo dele
+     menos uma folga — ver App.tsx) fica na BORDA INFERIOR desse elemento, não
+     no meio — assim o painel inteiro cresce pra cima, sem nunca sobrepor o
+     tile (senão o clique de fechar, no mesmo tile, acertaria o painel). */
+  transform: translate(-50%, -100%);
+}
+.group-expand-panel {
+  position: relative;
+  transform-origin: 50% 100%;
+  min-width: 180px;
+  max-width: 260px;
+  padding: 10px;
+  border-radius: 16px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 32px #0007;
+  animation: favorite-preview-in 220ms cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+.group-expand-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.group-expand-heading button {
+  color: var(--muted);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.group-expand-heading button:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+.group-expand-icons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
 /* Arrastar um ícone (só com o lápis ligado) sobre outro pra agrupar: contorno
    destacado no alvo enquanto o item arrastado passa por cima dele. */
 .favorite.drop-target {
   border-radius: 30%;
   outline: 2px dashed var(--accent);
   outline-offset: 3px;
+}
+/* Soltar numa das pontas de um ícone (não no centro) reposiciona o favorito
+   arrastado ali, sem agrupar — uma barra na borda indica de que lado ele vai
+   entrar, em vez do contorno pontilhado usado pra "vai agrupar". */
+.favorite.drop-before,
+.favorite.drop-after {
+  position: relative;
+}
+.favorite.drop-before::before,
+.favorite.drop-after::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.favorite.drop-before::before {
+  left: -6px;
+}
+.favorite.drop-after::before {
+  right: -6px;
 }
 .page-arrow {
   width: 27px;
@@ -1170,6 +1342,55 @@ h3 {
   color: var(--muted);
   text-align: right;
   margin: 7px 20px 0;
+}
+/* Seção (pasta importada): divisória com o nome, seguida dos favoritos de
+   dentro dela — igual ao pill principal, mas sem paginação (mostra tudo,
+   quebrando linha) e sem ficar escondido atrás de um ícone só. */
+.collection-section {
+  margin-top: 18px;
+  border-radius: 16px;
+  transition: background 150ms, box-shadow 150ms;
+}
+/* Arrastar um ícone pra dentro do "corpo" da seção (não sobre um ícone
+   específico dela) — destaca a seção inteira como alvo, já que o efeito é só
+   "essa seção passa a ter o ícone", sem uma posição exata como nos favoritos. */
+.collection-section.drop-target-section {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+/* Âncora comum pro posicionamento da barra de edição/cartão de prévia de um
+   favorito: tanto o pill principal quanto cada seção levam essa classe, pra
+   "closest(.favorite-anchor)" achar o container certo nos dois casos (ver
+   renderFavoriteOverlays no App.tsx). */
+.favorite-anchor {
+  position: relative;
+}
+.collection-section-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 13px;
+  margin-bottom: 10px;
+}
+.collection-section-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.collection-section-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.collection-section-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.collection-section-favorites {
+  row-gap: 14px;
 }
 .empty-row {
   grid-column: 1 / -1;
@@ -1388,7 +1609,7 @@ form label {
   font-weight: 550;
   margin: 17px 0 7px;
 }
-label input:not([type="file"]),
+label input:not([type="file"]):not([type="checkbox"]),
 label textarea,
 label select,
 .inline-create input,
@@ -1636,9 +1857,108 @@ textarea {
   background: var(--raised);
   color: var(--text);
 }
+.search-dialog {
+  width: 480px;
+}
+.search-dialog-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  margin: 4px 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--muted);
+}
+.search-dialog-field input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+}
+.search-dialog-field input:focus {
+  outline: none;
+}
+.search-results {
+  display: grid;
+  gap: 4px;
+  max-height: 340px;
+  margin: 0;
+  padding: 0 3px 0 0;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+.search-results::-webkit-scrollbar {
+  display: none;
+}
+.search-result-row {
+  display: flex;
+}
+.search-result-favicon {
+  display: grid;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  color: var(--muted);
+}
+.search-result-favicon img {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+}
+.search-result-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  text-decoration: none;
+}
+.search-result-info:hover {
+  background: var(--raised);
+}
+.search-result-info strong {
+  color: var(--text);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-result-info span {
+  color: var(--muted);
+  font-size: 10px;
+}
 .collection-bookmark-actions button:last-child:hover {
   color: #f09b9b;
   background: #b73c3c22;
+}
+.collection-section-creator {
+  display: flex;
+  gap: 6px;
+  margin-top: 9px;
+}
+.collection-section-creator input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+}
+.collection-section-creator button {
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 0 12px;
+  border-radius: 10px;
 }
 .text-button {
   color: var(--accent);
@@ -1824,6 +2144,21 @@ textarea {
   gap: 6px;
   font-size: 11px;
   color: var(--muted);
+}
+.group-dialog-fields label textarea {
+  resize: vertical;
+}
+/* "Exibir nome": única linha (caixa + texto), diferente dos outros campos
+   deste modal, que empilham o rótulo em cima do controle. */
+.group-dialog-fields label.checkbox-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.checkbox-field input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
 }
 .delete-confirm p {
   font-size: 12px;

@@ -72,6 +72,10 @@ model Collection {
   isPublic Boolean @default(false)
   shape String @default("rounded")
   behavior String @default("expansive")
+  // Posição na lista "Suas coleções" — igual ao "order" de Bookmark, escrito
+  // tanto pelo botão "Ordenar A-Z" quanto por arrastar uma coleção pra outra
+  // posição na lista.
+  order Int @default(0)
   createdAt DateTime @default(now())
   bookmarks Bookmark[]
   groups BookmarkGroup[]
@@ -83,6 +87,18 @@ model BookmarkGroup {
   collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   name String @db.VarChar(120)
   color String @default("#b9ee78")
+  description String @default("")
+  // Exibe o nome do grupo escrito embaixo do ícone, na grade — desligado por
+  // padrão (só o tooltip ao passar o mouse, como já era antes desse campo existir).
+  showName Boolean @default(false)
+  // Formato da moldura só deste grupo (círculo/quadrado/arredondado); null usa
+  // o formato da própria coleção (collection.shape), sem precisar copiar o
+  // valor pra cada grupo novo nem ficar sincronizando quando a coleção muda.
+  shape String?
+  // "tile": ícone único (App Library) — criado ao arrastar um favorito sobre outro.
+  // "section": divisória com o nome do grupo e os favoritos visíveis direto —
+  // criado ao importar uma pasta aninhada. Fixo desde a criação (não editável).
+  display String @default("tile")
   createdAt DateTime @default(now())
   bookmarks Bookmark[]
   @@index([collectionId])
@@ -99,6 +115,7 @@ model Bookmark {
   favicon String @default("")
   color String @default("#b9ee78")
   isPublic Boolean @default(false)
+  order Int @default(0)
   createdAt DateTime @default(now())
   @@index([collectionId])
   @@index([groupId])

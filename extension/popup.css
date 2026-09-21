@@ -49,6 +49,10 @@ header strong {
   color: var(--muted);
   margin-bottom: 12px;
 }
+.optional {
+  font-weight: 400;
+  text-transform: none;
+}
 select,
 input[type="text"],
 textarea {
@@ -103,6 +107,21 @@ button.secondary {
   color: var(--text);
   border: 1px solid var(--border);
   margin-top: 8px;
+}
+.inline-creator {
+  display: flex;
+  gap: 6px;
+  margin: -6px 0 12px;
+}
+.inline-creator input {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
+}
+.inline-creator button {
+  flex-shrink: 0;
+  width: auto;
+  margin-top: 0;
 }
 .feedback {
   min-height: 16px;
