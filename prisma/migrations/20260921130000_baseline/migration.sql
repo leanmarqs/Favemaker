@@ -69,22 +69,43 @@ CREATE TABLE "Collection" (
     "description" TEXT NOT NULL DEFAULT '',
     "color" TEXT NOT NULL DEFAULT '#b9ee78',
     "isPublic" BOOLEAN NOT NULL DEFAULT false,
-    "shape" TEXT NOT NULL DEFAULT 'circle',
+    "shape" TEXT NOT NULL DEFAULT 'rounded',
+    "behavior" TEXT NOT NULL DEFAULT 'expansive',
+    "order" INTEGER NOT NULL DEFAULT 0,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "Collection_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
+CREATE TABLE "BookmarkGroup" (
+    "id" TEXT NOT NULL,
+    "collectionId" TEXT NOT NULL,
+    "name" VARCHAR(120) NOT NULL,
+    "color" TEXT NOT NULL DEFAULT '#b9ee78',
+    "description" TEXT NOT NULL DEFAULT '',
+    "showName" BOOLEAN NOT NULL DEFAULT false,
+    "shape" TEXT,
+    "display" TEXT NOT NULL DEFAULT 'tile',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "BookmarkGroup_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "Bookmark" (
     "id" TEXT NOT NULL,
     "collectionId" TEXT NOT NULL,
+    "groupId" TEXT,
     "name" VARCHAR(120) NOT NULL,
     "url" TEXT NOT NULL,
     "description" TEXT NOT NULL DEFAULT '',
     "favicon" TEXT NOT NULL DEFAULT '',
     "color" TEXT NOT NULL DEFAULT '#b9ee78',
     "isPublic" BOOLEAN NOT NULL DEFAULT false,
+    "order" INTEGER NOT NULL DEFAULT 0,
+    "linkStatus" TEXT NOT NULL DEFAULT 'unknown',
+    "linkCheckedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "Bookmark_pkey" PRIMARY KEY ("id")
@@ -121,7 +142,13 @@ CREATE INDEX "AuthEvent_eventType_idx" ON "AuthEvent"("eventType");
 CREATE INDEX "Collection_ownerId_idx" ON "Collection"("ownerId");
 
 -- CreateIndex
+CREATE INDEX "BookmarkGroup_collectionId_idx" ON "BookmarkGroup"("collectionId");
+
+-- CreateIndex
 CREATE INDEX "Bookmark_collectionId_idx" ON "Bookmark"("collectionId");
+
+-- CreateIndex
+CREATE INDEX "Bookmark_groupId_idx" ON "Bookmark"("groupId");
 
 -- AddForeignKey
 ALTER TABLE "Session" ADD CONSTRAINT "Session_ownerId_fkey" FOREIGN KEY ("ownerId") REFERENCES "Owner"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -139,5 +166,11 @@ ALTER TABLE "AuthEvent" ADD CONSTRAINT "AuthEvent_ownerId_fkey" FOREIGN KEY ("ow
 ALTER TABLE "Collection" ADD CONSTRAINT "Collection_ownerId_fkey" FOREIGN KEY ("ownerId") REFERENCES "Owner"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "BookmarkGroup" ADD CONSTRAINT "BookmarkGroup_collectionId_fkey" FOREIGN KEY ("collectionId") REFERENCES "Collection"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "Bookmark" ADD CONSTRAINT "Bookmark_collectionId_fkey" FOREIGN KEY ("collectionId") REFERENCES "Collection"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Bookmark" ADD CONSTRAINT "Bookmark_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES "BookmarkGroup"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 

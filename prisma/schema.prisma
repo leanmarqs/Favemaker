@@ -116,6 +116,12 @@ model Bookmark {
   color String @default("#b9ee78")
   isPublic Boolean @default(false)
   order Int @default(0)
+  // "unknown": ainda não verificado (padrão pra tudo que já existia antes
+  // desse campo, e pra favoritos recém-criados até a próxima rodada da
+  // rotina). "ok"/"broken": resultado da última verificação — ver
+  // server/linkCheck.mjs. Nunca bloqueia nada, só decolore o ícone na grade.
+  linkStatus String @default("unknown")
+  linkCheckedAt DateTime?
   createdAt DateTime @default(now())
   @@index([collectionId])
   @@index([groupId])
