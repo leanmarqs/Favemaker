@@ -19,6 +19,10 @@ export interface Bookmark {
   color: string;
   isPublic: boolean;
   order?: number;
+  // "unknown" (nunca verificado) | "ok" | "broken" — ver server/linkCheck.mjs.
+  // Só afeta a aparência do ícone (decolorido quando "broken"), nunca some
+  // nem bloqueia nada.
+  linkStatus?: string;
   createdAt?: string;
 }
 export interface BookmarkGroup {

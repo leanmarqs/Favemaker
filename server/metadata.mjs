@@ -129,7 +129,16 @@ export async function safeFetch(
   userAgent = DEFAULT_UA,
   truncate = false,
 ) {
-  if (redirects > 3) throw new Error("Muitos redirecionamentos.");
+  if (redirects > 3)
+    // tooManyRedirects (não "status"): cada redirecionamento já foi uma
+    // resposta HTTP de verdade do servidor — bem diferente de nunca ter
+    // conseguido falar com ele. linkCheck.mjs usa essa distinção pra não
+    // marcar como quebrado um site só porque a cadeia de login dele (ex.:
+    // Battle.net: battle.net → shop → oauth → callback → 401) passa dos 3
+    // saltos que esse limite permite.
+    throw Object.assign(new Error("Muitos redirecionamentos."), {
+      tooManyRedirects: true,
+    });
   const url = new URL(value);
   if (
     !["http:", "https:"].includes(url.protocol) ||
@@ -172,7 +181,12 @@ export async function safeFetch(
       truncate,
     );
   if (result.status !== 200)
-    throw new Error("Não foi possível consultar o site.");
+    // status vai junto pro linkCheck.mjs poder distinguir "site fora do ar"
+    // de "site de pé, só recusou essa requisição" (401/403 de um paywall/
+    // login) — ver checkLink.
+    throw Object.assign(new Error("Não foi possível consultar o site."), {
+      status: result.status,
+    });
   return result;
 }
 export async function imageData(buffer, { crop = "inside" } = {}) {

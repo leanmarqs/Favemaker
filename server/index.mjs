@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { metadata, normalizeUrl, resolveImage } from "./metadata.mjs";
 import { parseBookmarksHtml, buildBookmarksHtml } from "./bookmarksFile.mjs";
+import { scheduleLinkChecks } from "./linkCheck.mjs";
 
 const prisma = new PrismaClient();
 // Índice funcional (GIN) pra buscar favoritos por nome/descrição/URL sem
@@ -659,7 +660,11 @@ app.use((error, _req, res, _next) => {
 if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-)
+) {
   app.listen(Number(process.env.PORT || 3001), () =>
     console.log("Pinicon disponível na porta " + (process.env.PORT || 3001)),
   );
+  // Só no servidor de verdade — importar este arquivo pra teste (ver
+  // tests/api.test.mjs) não deve disparar checagens de link de fundo.
+  scheduleLinkChecks(prisma);
+}

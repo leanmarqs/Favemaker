@@ -158,16 +158,17 @@ function Sphere({
   bookmark,
   shape = "circle",
 }: {
-  bookmark: Pick<Bookmark, "favicon" | "color" | "name">;
+  bookmark: Pick<Bookmark, "favicon" | "color" | "name" | "linkStatus">;
   shape?: string;
 }) {
   const [failed, setFailed] = useState(false);
   const borderRadius =
     shape === "square" ? 0 : shape === "rounded" ? "28%" : "50%";
+  const broken = bookmark.linkStatus === "broken";
   useEffect(() => setFailed(false), [bookmark.favicon]);
   return (
     <span
-      className={`sphere sphere-${shape}`}
+      className={`sphere sphere-${shape} ${broken ? "link-broken" : ""}`}
       style={
         {
           "--orb": bookmark.color,
@@ -1879,10 +1880,6 @@ export default function App({
   >([]);
   const [searchBusy, setSearchBusy] = useState(false);
   const searchTimer = useRef<number | null>(null);
-  // Recolhe a busca + "Nova coleção" + "Filtrar" (e o painel de filtro, se
-  // aberto) num só clique — útil pra quem já tem os filtros ajustados e só
-  // quer mais espaço pra lista de coleções.
-  const [heroExpanded, setHeroExpanded] = useState(true);
   // "Resultados do filtro" é uma coleção sintética (recalculada a cada render,
   // nunca salva no servidor) — expandir/recolher ela não pode passar por
   // toggleCollectionBehavior (que faria PATCH /collections/temporary-filter,
@@ -1947,6 +1944,7 @@ export default function App({
   const deleteBookmarkDialog = useRef<HTMLDialogElement>(null);
   const deleteCollectionDialog = useRef<HTMLDialogElement>(null);
   const searchDialog = useRef<HTMLDialogElement>(null);
+  const filterDialog = useRef<HTMLDialogElement>(null);
   const deleteSectionDialog = useRef<HTMLDialogElement>(null);
   const modalDrag = useRef<{
     pointerId: number;
@@ -2409,6 +2407,10 @@ export default function App({
       if (searchTimer.current) window.clearTimeout(searchTimer.current);
     };
   }, [searchQuery]);
+  // Busca e filtro agora são modais de verdade (<dialog>), não painéis soltos
+  // — abrir um sempre fecha o outro na hora (ver os onClick dos botões que
+  // abrem cada um). Fechar a busca limpa a consulta, pra não reabrir com um
+  // resultado velho na tela.
   useEffect(() => {
     if (searchOpen && !searchDialog.current?.open) {
       searchDialog.current?.showModal();
@@ -2418,6 +2420,12 @@ export default function App({
       setSearchResults([]);
     }
   }, [searchOpen]);
+  useEffect(() => {
+    if (filterOpen && !filterDialog.current?.open)
+      filterDialog.current?.showModal();
+    else if (!filterOpen && filterDialog.current?.open)
+      filterDialog.current.close();
+  }, [filterOpen]);
   function open(
     type: "collection" | "bookmark",
     data?: Partial<Draft>,
@@ -2882,10 +2890,45 @@ export default function App({
     <div className="app-shell">
       <header className="topbar">
         <a className="brand" href="/" aria-label="Pinicon, início">
-          <img src="/pinicon.svg" alt="" />
+          <img src="/pinicon-icon-2.png" alt="" />
           pinicon<span className="brand-period">.</span>
         </a>
+        {!readOnly && (
+          <form className="search-bar header-add-bar" onSubmit={submitUrl}>
+            <Search size={21} />
+            <input
+              aria-label="URL do site para favoritar"
+              placeholder="Cole ou digite o link de um site…"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              required
+            />
+            <button
+              type="submit"
+              disabled={busy || loading || !!connectionError}
+              aria-label={
+                busy ? "Buscando informações do site" : "Adicionar favorito"
+              }
+              title={
+                busy ? "Buscando informações do site" : "Adicionar favorito"
+              }
+            >
+              {busy ? <span className="loader" /> : <Plus size={18} />}
+            </button>
+          </form>
+        )}
         <div className="header-actions">
+          <button
+            type="button"
+            className="theme-toggle"
+            aria-label={
+              theme === "dark" ? "Ativar tema claro" : "Ativar tema escuro"
+            }
+            title={theme === "dark" ? "Tema claro" : "Tema escuro"}
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          >
+            {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
           {profile && (
             <div className="account-menu" ref={accountMenu}>
               <button
@@ -2921,20 +2964,6 @@ export default function App({
                     >
                       <User size={16} />
                       Conta
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() =>
-                        setTheme(theme === "dark" ? "light" : "dark")
-                      }
-                    >
-                      {theme === "dark" ? (
-                        <Sun size={16} />
-                      ) : (
-                        <Moon size={16} />
-                      )}
-                      Tema
                     </button>
                     {onLogout && (
                       <button
@@ -3228,119 +3257,6 @@ export default function App({
         ) : (
           <>
             <div className="sticky-header">
-              <section className="hero">
-                {!readOnly && (
-                  <>
-                    {heroExpanded && (
-                    <>
-                    <form className="search-bar" onSubmit={submitUrl}>
-                      <Search size={21} />
-                      <input
-                        aria-label="URL do site para favoritar"
-                        placeholder="Cole ou digite o link de um site…"
-                        value={url}
-                        onChange={(e) => setUrl(e.target.value)}
-                        required
-                      />
-                      <button
-                        type="submit"
-                        disabled={busy || loading || !!connectionError}
-                        aria-label={
-                          busy
-                            ? "Buscando informações do site"
-                            : "Adicionar favorito"
-                        }
-                        title={
-                          busy
-                            ? "Buscando informações do site"
-                            : "Adicionar favorito"
-                        }
-                      >
-                        {busy ? (
-                          <span className="loader" />
-                        ) : (
-                          <Plus size={18} />
-                        )}
-                      </button>
-                    </form>
-                    <div className="toolbar">
-                      <button
-                        onClick={() => open("collection")}
-                        disabled={loading || !!connectionError}
-                      >
-                        <Plus size={16} />
-                        Nova coleção
-                      </button>
-                      <button
-                        type="button"
-                        aria-expanded={filterOpen}
-                        onClick={() => setFilterOpen((value) => !value)}
-                      >
-                        <SlidersHorizontal size={15} />
-                        Filtrar
-                      </button>
-                      <button
-                        type="button"
-                        disabled={loading || !!connectionError}
-                        onClick={() => setSearchOpen(true)}
-                      >
-                        <Search size={15} />
-                        Buscar
-                      </button>
-                    </div>
-                    {filterOpen && (
-                      <div
-                        className="filter-panel"
-                        aria-label="Opções de filtro"
-                      >
-                        {(Object.keys(filterLabels) as FilterKey[]).map(
-                          (filter) => (
-                            <button
-                              type="button"
-                              key={filter}
-                              className={
-                                activeFilters.includes(filter) ? "active" : ""
-                              }
-                              onClick={() => toggleFilter(filter)}
-                            >
-                              {filterLabels[filter]}
-                            </button>
-                          ),
-                        )}
-                        {activeFilters.length > 0 && (
-                          <button
-                            type="button"
-                            className="clear-filter"
-                            onClick={() => setActiveFilters([])}
-                          >
-                            Limpar filtro
-                          </button>
-                        )}
-                      </div>
-                    )}
-                    </>
-                    )}
-                    <button
-                      type="button"
-                      className="hero-toggle"
-                      aria-expanded={heroExpanded}
-                      aria-label={
-                        heroExpanded
-                          ? "Recolher busca e filtros"
-                          : "Expandir busca e filtros"
-                      }
-                      title={heroExpanded ? "Recolher" : "Expandir"}
-                      onClick={() => setHeroExpanded((value) => !value)}
-                    >
-                      {heroExpanded ? (
-                        <ChevronUp size={14} />
-                      ) : (
-                        <ChevronDown size={14} />
-                      )}
-                    </button>
-                  </>
-                )}
-              </section>
               <div className="library-heading">
                 <div>
                   <h2>
@@ -3407,6 +3323,39 @@ export default function App({
                       ) : (
                         <ArrowUpAZ size={13} />
                       )}
+                    </button>
+                    <button
+                      type="button"
+                      aria-expanded={searchOpen}
+                      aria-label="Buscar favoritos"
+                      title="Buscar favoritos"
+                      onClick={() => {
+                        setFilterOpen(false);
+                        setSearchOpen((value) => !value);
+                      }}
+                    >
+                      <Search size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Nova coleção"
+                      title="Nova coleção"
+                      disabled={loading || !!connectionError}
+                      onClick={() => open("collection")}
+                    >
+                      <Plus size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-expanded={filterOpen}
+                      aria-label="Filtrar"
+                      title="Filtrar"
+                      onClick={() => {
+                        setSearchOpen(false);
+                        setFilterOpen((value) => !value);
+                      }}
+                    >
+                      <SlidersHorizontal size={13} />
                     </button>
                   </div>
                 )}
@@ -4415,8 +4364,52 @@ export default function App({
         </div>
       </dialog>
       <dialog
+        ref={filterDialog}
+        className="confirm-dialog filter-dialog"
+        aria-labelledby="filter-dialog-title"
+        onCancel={() => setFilterOpen(false)}
+        onClick={(e) => {
+          if (e.target === filterDialog.current) setFilterOpen(false);
+        }}
+      >
+        <div className="modal-content">
+          <div className="modal-heading">
+            <h2 id="filter-dialog-title">Filtrar</h2>
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="Fechar modal"
+              onClick={() => setFilterOpen(false)}
+            >
+              <X size={20} />
+            </button>
+          </div>
+          <div className="filter-panel" aria-label="Opções de filtro">
+            {(Object.keys(filterLabels) as FilterKey[]).map((filter) => (
+              <button
+                type="button"
+                key={filter}
+                className={activeFilters.includes(filter) ? "active" : ""}
+                onClick={() => toggleFilter(filter)}
+              >
+                {filterLabels[filter]}
+              </button>
+            ))}
+            {activeFilters.length > 0 && (
+              <button
+                type="button"
+                className="clear-filter"
+                onClick={() => setActiveFilters([])}
+              >
+                Limpar filtro
+              </button>
+            )}
+          </div>
+        </div>
+      </dialog>
+      <dialog
         ref={searchDialog}
-        className="search-dialog"
+        className="confirm-dialog search-dialog"
         aria-labelledby="search-dialog-title"
         onCancel={() => setSearchOpen(false)}
         onClick={(e) => {
@@ -4435,8 +4428,8 @@ export default function App({
               <X size={20} />
             </button>
           </div>
-          <label className="search-dialog-field">
-            <Search size={16} />
+          <label className="search-panel-field">
+            <Search size={15} />
             <input
               autoFocus
               type="search"
@@ -4445,32 +4438,34 @@ export default function App({
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </label>
-          <ul className="search-results">
-            {searchResults.map((bookmark) => (
-              <li key={bookmark.id} className="search-result-row">
-                <span className="search-result-favicon">
-                  {bookmark.favicon ? (
-                    <img src={bookmark.favicon} alt="" />
-                  ) : (
-                    <Globe2 size={16} />
-                  )}
-                </span>
-                <a
-                  className="search-result-info"
-                  href={bookmark.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => {
-                    registerUsage(bookmark.id);
-                    setSearchOpen(false);
-                  }}
-                >
-                  <strong>{bookmark.name}</strong>
-                  <span>{bookmark.collectionName}</span>
-                </a>
-              </li>
-            ))}
-          </ul>
+          {(searchQuery.trim() || searchResults.length > 0) && (
+            <ul className="search-results">
+              {searchResults.map((bookmark) => (
+                <li key={bookmark.id} className="search-result-row">
+                  <span className="search-result-favicon">
+                    {bookmark.favicon ? (
+                      <img src={bookmark.favicon} alt="" />
+                    ) : (
+                      <Globe2 size={16} />
+                    )}
+                  </span>
+                  <a
+                    className="search-result-info"
+                    href={bookmark.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => {
+                      registerUsage(bookmark.id);
+                      setSearchOpen(false);
+                    }}
+                  >
+                    <strong>{bookmark.name}</strong>
+                    <span>{bookmark.collectionName}</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
           {searchBusy && <p className="help">Buscando…</p>}
           {!searchBusy && searchQuery.trim() && !searchResults.length && (
             <p className="help">Nenhum favorito encontrado.</p>
