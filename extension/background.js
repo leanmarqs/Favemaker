@@ -6,12 +6,12 @@ import {
   createBookmark,
 } from "./shared.js";
 
-const MENU_ID = "pinicon-save-page";
+const MENU_ID = "likemylinks-save-page";
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: MENU_ID,
-    title: "Salvar no Pinicon",
+    title: "Salvar no Like My Links",
     contexts: ["link"],
   });
 });
@@ -33,13 +33,13 @@ function notify(title, message) {
 async function handleSave(linkUrl) {
   const { baseUrl, lastCollectionId, lastGroupId } = await getSettings();
   if (!lastCollectionId) {
-    notify("Pinicon", "Abra a extensão e escolha uma coleção padrão antes de salvar.");
+    notify("Like My Links", "Abra a extensão e escolha uma coleção padrão antes de salvar.");
     return;
   }
   try {
     const me = await fetchMe(baseUrl);
     if (!me.user) {
-      notify("Pinicon", "Faça login no Pinicon no navegador antes de salvar.");
+      notify("Like My Links", "Faça login no Like My Links no navegador antes de salvar.");
       return;
     }
     // Confirma que a seção lembrada ainda existe e ainda é dessa mesma
@@ -60,13 +60,12 @@ async function handleSave(linkUrl) {
       name: (data.name || "Sem título").slice(0, 120),
       description: (data.description || "").slice(0, 2000),
       color: data.color,
-      isPublic: false,
       url: data.url || linkUrl,
       favicon: data.favicon,
       collectionId: lastCollectionId,
       groupId,
     });
-    notify("Salvo no Pinicon", data.name || linkUrl);
+    notify("Salvo no Like My Links", data.name || linkUrl);
   } catch (error) {
     notify("Não foi possível salvar", error.message || "Erro inesperado.");
   }

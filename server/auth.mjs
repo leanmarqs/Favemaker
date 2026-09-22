@@ -1,5 +1,6 @@
 import { randomBytes, createHash, scrypt as derive, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
+import argon2 from "argon2";
 import { OAuth2Client } from "google-auth-library";
 import { emailConfigured, sendPasswordResetEmail, sendVerificationEmail } from "./email.mjs";
 import { resolveImage } from "./metadata.mjs";
@@ -7,14 +8,14 @@ import { resolveImage } from "./metadata.mjs";
 const scrypt = promisify(derive);
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const cookieOptions = { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/" };
-// Extensões de navegador (ex: "Salvar no Pinicon") não recebem o cookie HttpOnly
+// Extensões de navegador (ex: "Salvar no Like My Links") não recebem o cookie HttpOnly
 // automaticamente entre origens, então leem o valor via chrome.cookies e o enviam
 // explicitamente neste header — o mesmo token, só um transporte diferente.
 const HEADER_TOKEN = /^[a-f0-9]{64}$/;
 const cookieToken = (req) => {
-  const header = req.headers["x-pinicon-session"];
+  const header = req.headers["x-likemylinks-session"];
   if (typeof header === "string" && HEADER_TOKEN.test(header)) return header;
-  return req.headers.cookie?.match(/(?:^|;\s*)pinicon_session=([a-f0-9]{64})(?:;|$)/)?.[1];
+  return req.headers.cookie?.match(/(?:^|;\s*)likemylinks_session=([a-f0-9]{64})(?:;|$)/)?.[1];
 };
 const MIN_PASSWORD = 8;
 const SESSION_DURATION = 30 * 86400000;
@@ -33,14 +34,27 @@ const publicUser = (owner) => ({
   googleLinked: Boolean(owner.googleId),
 });
 export async function hashPassword(password) {
-  const salt = randomBytes(16).toString("hex");
-  const key = await scrypt(password, salt, 64);
-  return `${salt}:${key.toString("hex")}`;
+  return argon2.hash(password);
 }
+// Formato antigo (contas criadas antes da migração para Argon2id): "salt:chaveHex",
+// gerado com scrypt — sem esse ramo, ninguém que ainda não fez login desde a
+// migração conseguiria entrar. verifyAndUpgrade (abaixo) reescreve o hash pra
+// Argon2id assim que a senha certa é confirmada, então esse ramo só existe até
+// cada conta fazer login (ou trocar senha) pelo menos uma vez após a migração.
 export async function verifyPassword(password, encoded) {
+  if (encoded.startsWith("$argon2")) {
+    try {
+      return await argon2.verify(encoded, password);
+    } catch {
+      return false;
+    }
+  }
   const [salt, key] = encoded.split(":");
   const actual = await scrypt(password, salt, 64);
   return timingSafeEqual(actual, Buffer.from(key, "hex"));
+}
+export function needsRehash(encoded) {
+  return !encoded.startsWith("$argon2");
 }
 // Consulta o HaveIBeenPwned via k-anonymity: só envia os 5 primeiros chars do hash SHA-1,
 // nunca a senha (ou o hash completo). Falha aberta se a API estiver indisponível.
@@ -82,6 +96,18 @@ export function installAuth(app, prisma) {
   }, 60000);
   cleanup.unref();
   const dummy = hashPassword(randomBytes(32).toString("hex"));
+  // Confirma a senha e, se ela ainda estiver no formato scrypt antigo,
+  // aproveita que a senha em texto puro já está em mãos (só existe nesse
+  // instante da requisição) para regravar o hash em Argon2id — migração
+  // transparente, sem exigir reset de senha nem derrubar a sessão de ninguém.
+  async function verifyAndUpgrade(owner, password) {
+    const valid = await verifyPassword(password, owner.passwordHash);
+    if (valid && needsRehash(owner.passwordHash))
+      await prisma.owner
+        .update({ where: { id: owner.id }, data: { passwordHash: await hashPassword(password) } })
+        .catch((error) => console.error("[auth] Falha ao migrar hash de senha:", error.message || error));
+    return valid;
+  }
   // Log de auditoria de segurança: nunca inclui senha ou tokens, só metadados do evento.
   async function logAuthEvent(req, ownerId, eventType) {
     try {
@@ -117,7 +143,7 @@ export function installAuth(app, prisma) {
       if (oldToken) await tx.session.deleteMany({ where: { tokenHash: hash(oldToken) } });
       await tx.session.create({ data: { tokenHash: hash(token), ownerId: owner.id, expiresAt: new Date(Date.now() + SESSION_DURATION) } });
     });
-    res.cookie("pinicon_session", token, { ...cookieOptions, maxAge: SESSION_DURATION });
+    res.cookie("likemylinks_session", token, { ...cookieOptions, maxAge: SESSION_DURATION });
     res.json({ user: publicUser(owner) });
   }
   async function createOwner(req, data) {
@@ -236,6 +262,10 @@ export function installAuth(app, prisma) {
       return res.status(403).json({ error: "Confirme seu e-mail para ativar a conta.", code: "PENDING_VERIFICATION" });
     }
     await prisma.owner.update({ where: { id: owner.id }, data: { failedLoginAttempts: 0, lockedUntil: null } });
+    if (needsRehash(owner.passwordHash))
+      await prisma.owner
+        .update({ where: { id: owner.id }, data: { passwordHash: await hashPassword(password) } })
+        .catch((error) => console.error("[auth] Falha ao migrar hash de senha:", error.message || error));
     await logAuthEvent(req, owner.id, "LOGIN_SUCCESS");
     await signIn(req, res, owner);
   });
@@ -309,7 +339,7 @@ export function installAuth(app, prisma) {
     const owner = await prisma.owner.findUnique({ where: { googleId: payload.sub } });
     if (!owner) {
       return res.status(404).json({
-        error: "Nenhuma conta do Pinicon foi encontrada.",
+        error: "Nenhuma conta do Like My Links foi encontrada.",
         code: "GOOGLE_ACCOUNT_NOT_LINKED",
       });
     }
@@ -338,7 +368,7 @@ export function installAuth(app, prisma) {
       await logAuthEvent(req, owner.id, "GOOGLE_LINKED");
       res.json({ user: publicUser(owner) });
     } catch (error) {
-      if (error.code === "P2002") return res.status(409).json({ error: "Esta conta Google já está conectada a outro usuário do Pinicon." });
+      if (error.code === "P2002") return res.status(409).json({ error: "Esta conta Google já está conectada a outro usuário do Like My Links." });
       throw error;
     }
   });
@@ -348,7 +378,7 @@ export function installAuth(app, prisma) {
     if (!req.owner.passwordHash)
       return res.status(400).json({ error: "Defina uma senha antes de desconectar o Google, para não perder o acesso à conta." });
     const password = req.body.password;
-    const valid = typeof password === "string" && await verifyPassword(password, req.owner.passwordHash);
+    const valid = typeof password === "string" && await verifyAndUpgrade(req.owner, password);
     if (!valid) return res.status(401).json({ error: "Senha incorreta." });
     const owner = await prisma.owner.update({ where: { id: req.owner.id }, data: { googleId: null } });
     await logAuthEvent(req, owner.id, "GOOGLE_UNLINKED");
@@ -358,7 +388,7 @@ export function installAuth(app, prisma) {
     const token = cookieToken(req);
     if (req.owner) await logAuthEvent(req, req.owner.id, "LOGOUT");
     if (token) await prisma.session.deleteMany({ where: { tokenHash: hash(token) } });
-    res.clearCookie("pinicon_session", cookieOptions);
+    res.clearCookie("likemylinks_session", cookieOptions);
     res.sendStatus(204);
   });
   app.patch("/api/auth/me", async (req, res) => {
@@ -412,7 +442,7 @@ export function installAuth(app, prisma) {
       if (!valid) return res.status(401).json({ error: "Senha incorreta." });
     }
     await prisma.owner.delete({ where: { id: req.owner.id } });
-    res.clearCookie("pinicon_session", cookieOptions);
+    res.clearCookie("likemylinks_session", cookieOptions);
     res.sendStatus(204);
   });
   app.use("/api", (req, res, next) => {

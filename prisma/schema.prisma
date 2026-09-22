@@ -12,6 +12,11 @@ enum AccountStatus {
 }
 model Owner {
   id String @id @default(uuid())
+  // Contas já existentes na migração que introduziu este campo recebem a
+  // data da própria migração (não a data real de criação, que não foi
+  // registrada antes disso) — só afeta o "Conta desde" do painel "Sobre esta
+  // conta" (ver server/community.mjs), sem consequência pra login/sessão.
+  createdAt DateTime @default(now())
   tokenHash String @unique
   username String? @unique
   email String? @unique
@@ -28,6 +33,17 @@ model Owner {
   emailVerifications EmailVerification[]
   passwordResets PasswordReset[]
   authEvents AuthEvent[]
+  communityPostLikes CommunityPostLike[]
+  communityPostSaves CommunityPostSave[]
+  communityItemLikes CommunityItemLike[]
+  communityItemSaves CommunityItemSave[]
+  communityComments CommunityComment[]
+  communityCommentLikes CommunityCommentLike[]
+  communityCommentSaves CommunityCommentSave[]
+  communityCommentReports CommunityCommentReport[]
+  communityBlocks CommunityBlock[]
+  communityFollows CommunityFollow[]
+  communityPostReports CommunityPostReport[]
 }
 model Session {
   tokenHash String @id
@@ -68,8 +84,15 @@ model Collection {
   owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   name String @db.VarChar(120)
   description String @default("")
-  color String @default("#b9ee78")
+  color String @default("#8b5cf6")
   isPublic Boolean @default(false)
+  // Quando a coleção virou pública pela última vez (ver PATCH /api/collections/:id
+  // em server/index.mjs) — null enquanto nunca foi pública. Ordena o feed da
+  // aba Comunidade (ver GET /api/community/feed em server/community.mjs) por
+  // "quando foi publicada", não por createdAt: uma coleção criada há meses e
+  // só agora tornada pública deve aparecer no topo do feed, não enterrada pela
+  // data de criação original.
+  publishedAt DateTime?
   shape String @default("rounded")
   behavior String @default("expansive")
   // Posição na lista "Suas coleções" — igual ao "order" de Bookmark, escrito
@@ -77,6 +100,16 @@ model Collection {
   // posição na lista.
   order Int @default(0)
   createdAt DateTime @default(now())
+  // Marca a coleção reservada "Itens Salvos" (ver toggleSavedItem em
+  // server/index.mjs), criada sob demanda na primeira vez que o dono favorita
+  // um item (seu ou público de outro usuário) e apagada de volta quando fica
+  // vazia — no máximo uma por dono, garantido por um índice único PARCIAL que
+  // só existe na migration SQL (WHERE "isSavedItems" = true), já que o Prisma
+  // não expressa índice parcial no schema; @@unique aqui restringiria também
+  // as coleções normais, que podem ser várias por dono. O nome em si não é
+  // usado pra identificá-la
+  // (o dono pode renomear à vontade sem quebrar o vínculo).
+  isSavedItems Boolean @default(false)
   bookmarks Bookmark[]
   groups BookmarkGroup[]
   @@index([ownerId])
@@ -86,7 +119,7 @@ model BookmarkGroup {
   collectionId String
   collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   name String @db.VarChar(120)
-  color String @default("#b9ee78")
+  color String @default("#8b5cf6")
   description String @default("")
   // Exibe o nome do grupo escrito embaixo do ícone, na grade — desligado por
   // padrão (só o tooltip ao passar o mouse, como já era antes desse campo existir).
@@ -103,6 +136,15 @@ model BookmarkGroup {
   bookmarks Bookmark[]
   @@index([collectionId])
 }
+// Sem campo isPublic próprio de propósito: um favorito não tem visibilidade
+// independente da coleção, sempre herda o isPublic dela (ver PATCH
+// /api/collections/:id em server/index.mjs, que agora é o único lugar que
+// decide visibilidade) — evita o caso de uma coleção pública "publicada
+// vazia" porque os itens continuavam marcados como privados por conta
+// própria. O servidor deriva a visibilidade de cada favorito a partir de
+// collection.isPublic sempre que precisa (ex: filtrar o que aparece no perfil
+// público ou no feed da Comunidade), sem guardar um valor redundante que
+// pudesse ficar dessincronizado da coleção.
 model Bookmark {
   id String @id @default(uuid())
   collectionId String
@@ -113,8 +155,7 @@ model Bookmark {
   url String
   description String @default("")
   favicon String @default("")
-  color String @default("#b9ee78")
-  isPublic Boolean @default(false)
+  color String @default("#8b5cf6")
   order Int @default(0)
   // "unknown": ainda não verificado (padrão pra tudo que já existia antes
   // desse campo, e pra favoritos recém-criados até a próxima rodada da
@@ -123,6 +164,132 @@ model Bookmark {
   linkStatus String @default("unknown")
   linkCheckedAt DateTime?
   createdAt DateTime @default(now())
+  // Preenchido só nas cópias dentro da coleção "Itens Salvos" (ver
+  // Collection.isSavedItems): id do favorito original que foi favoritado (do
+  // próprio dono ou público de outro usuário). Sem chave estrangeira de
+  // propósito — o original pode já ter sido apagado, ou nem existir como
+  // linha de verdade (ex: um favorito de publicação fictícia da Comunidade,
+  // ver communityMock.ts), e mesmo assim a cópia salva continua valendo.
+  savedFromId String?
+  @@unique([collectionId, savedFromId])
   @@index([collectionId])
   @@index([groupId])
+}
+// Interações do dono com o feed da aba Comunidade (ver server/community.mjs).
+// As publicações em si ainda são fixas no frontend (communityMock.ts, sem
+// tabela própria) — só curtir/salvar/comentar por um dono real precisa
+// sobreviver a troca de navegador/dispositivo, então isso fica no banco em
+// vez de localStorage. postId/bookmarkId apontam pros ids fixos dos mocks
+// (ex: "p1", "mock-b3"), sem chave estrangeira, porque esse conteúdo não tem
+// tabela própria ainda.
+model CommunityPostLike {
+  ownerId String
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  postId String
+  createdAt DateTime @default(now())
+  @@id([ownerId, postId])
+  @@index([postId])
+}
+model CommunityPostSave {
+  ownerId String
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  postId String
+  createdAt DateTime @default(now())
+  @@id([ownerId, postId])
+  @@index([postId])
+}
+model CommunityItemLike {
+  ownerId String
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  bookmarkId String
+  createdAt DateTime @default(now())
+  @@id([ownerId, bookmarkId])
+  @@index([bookmarkId])
+}
+model CommunityItemSave {
+  ownerId String
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  bookmarkId String
+  createdAt DateTime @default(now())
+  @@id([ownerId, bookmarkId])
+  @@index([bookmarkId])
+}
+// Comentários de verdade escritos por donos reais no feed — os comentários
+// dos usuários fictícios (ver communityMock.ts) continuam fixos no frontend;
+// só o que o próprio visitante escreve é persistido aqui.
+model CommunityComment {
+  id String @id @default(uuid())
+  postId String
+  ownerId String
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  text String @db.VarChar(500)
+  createdAt DateTime @default(now())
+  @@index([postId])
+}
+// commentId pode apontar tanto para um comentário fictício ("c1") quanto para
+// o id de um CommunityComment real — curtir/salvar funciona igual nos dois casos.
+model CommunityCommentLike {
+  ownerId String
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  commentId String
+  createdAt DateTime @default(now())
+  @@id([ownerId, commentId])
+  @@index([commentId])
+}
+model CommunityCommentSave {
+  ownerId String
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  commentId String
+  createdAt DateTime @default(now())
+  @@id([ownerId, commentId])
+  @@index([commentId])
+}
+// Denúncia de comentário abusivo — depois de algumas denúncias de donos
+// DISTINTOS (ver COMMENT_REPORT_HIDE_THRESHOLD em server/community.mjs), o
+// comentário passa a ficar oculto pra todo mundo automaticamente, sem
+// depender de uma fila de moderação humana pra conteúdo obviamente abusivo.
+// Upsert idempotente: denunciar duas vezes não conta duas vezes.
+model CommunityCommentReport {
+  ownerId String
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  commentId String
+  createdAt DateTime @default(now())
+  @@id([ownerId, commentId])
+  @@index([commentId])
+}
+// Bloquear o autor de um comentário: os comentários dele somem do feed só
+// pra quem bloqueou (as outras pessoas continuam vendo normalmente).
+// authorId aponta pro id do autor (Owner.id de um comentário real, ou o id
+// fixo de um usuário fictício do communityMock.ts), sem chave estrangeira
+// pelo mesmo motivo do postId/commentId acima — esse autor pode não ter
+// conta real por trás.
+model CommunityBlock {
+  ownerId String
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  authorId String
+  createdAt DateTime @default(now())
+  @@id([ownerId, authorId])
+}
+// Seguir o autor de uma publicação — só alimenta o cartão de perfil (contagem
+// de "seguidores" e o botão Seguir/Seguindo, ver server/community.mjs) e não
+// muda o feed em si, já que ele já mostra todo mundo. Mesmo authorId sem
+// chave estrangeira das outras tabelas acima: o autor pode ser fictício.
+model CommunityFollow {
+  ownerId String
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  authorId String
+  createdAt DateTime @default(now())
+  @@id([ownerId, authorId])
+  @@index([authorId])
+}
+// Denúncia de PUBLICAÇÃO (distinta de CommunityCommentReport, que é por
+// comentário) — mesma lógica de ocultação automática depois de denúncias de
+// donos distintos, ver POST_REPORT_HIDE_THRESHOLD em server/community.mjs.
+model CommunityPostReport {
+  ownerId String
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  postId String
+  createdAt DateTime @default(now())
+  @@id([ownerId, postId])
+  @@index([postId])
 }

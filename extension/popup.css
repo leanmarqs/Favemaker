@@ -1,13 +1,13 @@
 :root {
   color-scheme: dark;
-  --bg: #101113;
-  --surface: #191a1d;
-  --raised: #222326;
-  --text: #f0f0f1;
-  --muted: #84868d;
-  --border: #2a2b2e;
-  --accent: #c0f17f;
-  --accent-ink: #243215;
+  --bg: #0f172a;
+  --surface: #161f38;
+  --raised: #202a4a;
+  --text: #f3f4ff;
+  --muted: #8b93b5;
+  --border: #263256;
+  --accent: #8b5cf6;
+  --accent-ink: #ffffff;
 }
 * {
   box-sizing: border-box;
@@ -30,7 +30,6 @@ header {
 header img {
   width: 22px;
   height: 22px;
-  border-radius: 7px;
 }
 header strong {
   font-size: 15px;

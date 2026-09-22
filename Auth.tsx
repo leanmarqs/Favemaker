@@ -78,7 +78,7 @@ async function authRequest(path: string, body?: unknown) {
     );
   return data;
 }
-const RESEND_COOLDOWN_KEY = "pinicon_resend_cooldown_until";
+const RESEND_COOLDOWN_KEY = "likemylinks_resend_cooldown_until";
 // Cooldown de 30s persistido no localStorage: sobrevive a trocar de tela ou recarregar a
 // página. É só uma trava de UX (o limite real contra abuso é o rate limit no servidor).
 function readResendCooldown() {
@@ -273,7 +273,17 @@ export default function Auth() {
         setUser(data.user);
       }
     } catch (e) {
-      setError((e as Error).message);
+      // Conta existe e a senha bateu, mas o e-mail nunca foi confirmado —
+      // manda pra tela de reenvio em vez de deixar preso na de login sem
+      // nenhum jeito de voltar a pedir um novo link (ver PENDING_VERIFICATION
+      // em server/auth.mjs). Cadastrar de novo não é saída: o servidor recusa
+      // usuário/e-mail já em uso.
+      if (view === "login" && (e as AuthRequestError).code === "PENDING_VERIFICATION") {
+        setNotice((e as Error).message);
+        setView("verify");
+      } else {
+        setError((e as Error).message);
+      }
     } finally {
       setBusy(false);
     }
@@ -315,8 +325,10 @@ export default function Auth() {
       <section className="auth-panel" aria-label={titles[view]}>
         <div className="auth-panel-inner">
           <div className="auth-brand">
-            <img src="/pinicon-icon-2.png" alt="" />
-            <h1>Pinicon</h1>
+            <img src="/likemylinks-logo-1.png" alt="" />
+            <h1>
+              Like <span className="brand-my">My</span> <span className="brand-links">Links</span>
+            </h1>
           </div>
           <p className="auth-subtitle">{subtitles[view]}</p>
           <form onSubmit={submit}>
@@ -505,9 +517,9 @@ export default function Auth() {
     >
       <div className="modal-content">
         <div className="modal-heading">
-          <h2>Nenhuma conta do Pinicon foi encontrada.</h2>
+          <h2>Nenhuma conta do Like My Links foi encontrada.</h2>
         </div>
-        <p>Essa conta do Google não está vinculada a nenhuma conta do Pinicon.</p>
+        <p>Essa conta do Google não está vinculada a nenhuma conta do Like My Links.</p>
         <div className="modal-footer">
           <button
             type="button"

@@ -35,13 +35,12 @@
 .auth-brand img {
   width: 108px;
   height: 108px;
-  border-radius: 26px;
   object-fit: contain;
 }
 .auth-brand h1 {
-  font-size: 40px;
+  font-size: 30px;
   font-weight: 750;
-  letter-spacing: -2px;
+  letter-spacing: -1px;
   margin: 0;
 }
 .auth-subtitle {
@@ -199,29 +198,33 @@
     "Segoe UI",
     sans-serif;
   color-scheme: dark;
-  --bg: #101113;
-  --surface: #191a1d;
-  --raised: #222326;
-  --text: #f0f0f1;
-  --muted: #84868d;
-  --border: #2a2b2e;
-  --accent: #c0f17f;
-  --accent-ink: #243215;
+  --bg: #0f172a;
+  --surface: #161f38;
+  --raised: #202a4a;
+  --text: #f3f4ff;
+  --muted: #8b93b5;
+  --border: #263256;
+  --accent: #8b5cf6;
+  --accent-ink: #ffffff;
+  --accent-2: #ec4899;
+  --accent-3: #3b82f6;
   --shadow: 0 12px 45px #0002;
   background: var(--bg);
   color: var(--text);
 }
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #f7f8f5;
+  --bg: #f3f4ff;
   --surface: #fff;
-  --raised: #eeefeb;
-  --text: #242823;
-  --muted: #747b71;
-  --border: #e1e5dc;
-  --accent: #abd966;
-  --accent-ink: #233614;
-  --shadow: 0 10px 40px #29351a08;
+  --raised: #ecedfb;
+  --text: #0f172a;
+  --muted: #6b7292;
+  --border: #e1e3f5;
+  --accent: #8b5cf6;
+  --accent-ink: #ffffff;
+  --accent-2: #ec4899;
+  --accent-3: #3b82f6;
+  --shadow: 0 10px 40px #0f172a0a;
 }
 * {
   box-sizing: border-box;
@@ -351,11 +354,12 @@ button {
 .brand img {
   width: 33px;
   height: 33px;
-  border-radius: 11px;
 }
-.brand-period {
+.brand-my {
   color: var(--accent);
-  margin-left: -9px;
+}
+.brand-links {
+  color: var(--accent-2);
 }
 .header-actions {
   flex-shrink: 0;
@@ -470,7 +474,7 @@ button {
   height: 5px;
   background: var(--accent);
   border-radius: 50%;
-  box-shadow: 0 0 12px #b9ee7866;
+  box-shadow: 0 0 12px #8b5cf666;
 }
 h1 {
   font-size: clamp(48px, 5.1vw, 70px);
@@ -508,12 +512,12 @@ h1 > span {
   display: flex;
   align-items: center;
   gap: 14px;
-  border: 1px solid #3d4138;
+  border: 1px solid var(--border);
   background: var(--surface);
   border-radius: 999px;
   padding: 9px 10px 9px 21px;
   box-shadow:
-    0 0 0 4px #b9ee7803,
+    0 0 0 4px #8b5cf603,
     var(--shadow);
 }
 .search-bar > svg {
@@ -605,6 +609,73 @@ textarea::placeholder {
   width: 100%;
   margin: 0 auto;
 }
+/* Cabeçalho do perfil público (App.tsx, ?perfil=<id>), inspirado no Twitter —
+   avatar sobreposto à faixa colorida, nome/usuário, "entrou em" e seguidores,
+   acima da grade de coleções públicas (reaproveitada de ".library"/CollectionRow). */
+.public-profile-header {
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+  padding-top: 18px;
+}
+.public-profile-banner {
+  height: 120px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, var(--accent-3), var(--accent) 55%, var(--accent-2) 140%);
+  opacity: 0.5;
+}
+.public-profile-main {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 0 8px;
+  margin-top: -40px;
+}
+.public-profile-avatar {
+  --orb: #9aa0a6;
+  width: 84px;
+  height: 84px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--orb);
+  border: 4px solid var(--bg);
+  color: #fff;
+  font-size: 30px;
+  font-weight: 700;
+  text-shadow: 0 1px 3px #0009;
+  overflow: hidden;
+}
+.public-profile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.public-profile-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 6px;
+}
+.public-profile-info h2 {
+  font-size: 20px;
+  margin: 0;
+}
+.public-profile-username {
+  color: var(--muted);
+  font-size: 14px;
+}
+.public-profile-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.public-profile-meta strong {
+  color: var(--text);
+}
 .library-heading {
   max-width: 1100px;
   width: 100%;
@@ -615,6 +686,33 @@ textarea::placeholder {
   padding-top: 18px;
   border-top: 1px solid var(--border);
 }
+.home-tabs {
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  gap: 4px;
+  padding-top: 18px;
+  padding-bottom: 14px;
+}
+.home-tabs button {
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.home-tabs button:hover {
+  color: var(--text);
+  background: var(--raised);
+}
+.home-tabs button.active {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+.under-construction > svg {
+  color: var(--accent-ink);
+}
 .collections-frame {
   /* Sem altura/overflow própria: o container cresce junto com o conteúdo, e a
      rolagem acontece na página (main), não numa barra de rolagem confinada aqui
@@ -623,6 +721,377 @@ textarea::placeholder {
   border-radius: 24px;
   padding: 24px;
   margin-bottom: 48px;
+}
+/* Feed da aba Comunidade (protótipo com dados fictícios, ver Community.tsx):
+   mais estreito que ".library" (640px, não 1100px) de propósito — texto e
+   grade de ícones num feed vertical ficam ilegíveis/espalhados demais na
+   largura cheia usada pela grade de coleções. */
+.community-feed {
+  max-width: 640px;
+  margin: 0 auto 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.feed-subtabs {
+  display: flex;
+  gap: 4px;
+}
+.feed-subtabs button {
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.feed-subtabs button:hover {
+  color: var(--text);
+  background: var(--raised);
+}
+.feed-subtabs button.active {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+.community-empty {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+  padding: 60px 20px;
+}
+.feed-post {
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 18px 20px;
+}
+.feed-post-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.feed-author {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.feed-author-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: inherit;
+  text-decoration: none;
+}
+.feed-author-link:hover strong {
+  text-decoration: underline;
+}
+/* Cartão de perfil ao passar o mouse no nome do autor da publicação (ver
+   HoverCard em Community.tsx) — posicionado relativo a ".feed-author", que é
+   o próprio gatilho do hover. */
+.hover-card {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 16px 40px #0006;
+  z-index: 6;
+  cursor: default;
+}
+.hover-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.hover-card-stats {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.hover-card-stats > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.hover-card-stats strong {
+  font-size: 14px;
+  color: var(--text);
+}
+.hover-card > button {
+  border-radius: 999px;
+  padding: 9px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.about-account {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.about-account-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.about-account-facts li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--muted);
+}
+.about-account-facts li:first-child {
+  border-top: none;
+}
+.about-account-facts strong {
+  color: var(--text);
+}
+.feed-avatar {
+  --orb: #8b5cf6;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--orb);
+  border: 1px solid #ffffff30;
+  color: #fff;
+  font-weight: 600;
+  text-shadow: 0 1px 3px #0009;
+}
+.feed-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.feed-post-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.feed-post-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+.feed-post-body {
+  margin: 14px 0;
+}
+/* O conteúdo de ".feed-post-body" é o próprio CollectionRow real (ver
+   Community.tsx) — ele já traz seu próprio espaçamento (".collection" tem
+   margin-bottom de vez de fábrica); aqui só zera esse excesso, já que quem
+   define o respiro entre o card e a barra de ações abaixo é ".feed-post-actions". */
+.feed-post-body .collection {
+  margin-bottom: 0;
+}
+/* Só no feed da Comunidade: mais respiro entre os ícones do que o padrão de
+   "Suas coleções" — o card aqui é bem mais estreito, então com poucos itens
+   visíveis por vez (ver pageSize em Community.tsx) o espaçamento original
+   deixava os ícones "grudados". ".pill" separa as setas do miolo da grade;
+   ".favorites" é a própria grade — o espaço ENTRE os ícones é o gap dela, não
+   o do ".pill" (que só afeta o espaço antes/depois da grade inteira). */
+.feed-post-body .pill {
+  gap: 20px;
+}
+.feed-post-body .favorites {
+  gap: 28px;
+}
+/* Só no feed da Comunidade: descrição da coleção com mais destaque (perto do
+   corpo do texto, não mais um legendinha discreta) — é o texto principal da
+   "publicação" aqui, igual ao corpo de um tweet, não um detalhe secundário
+   como é dentro do card compacto de "Suas coleções". */
+.feed-post-body .collection-description {
+  font-size: 15px;
+  color: var(--text);
+  line-height: 1.5;
+  margin: 0 0 14px;
+}
+.feed-post-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.feed-post-actions button {
+  padding: 7px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.feed-post-actions button:hover {
+  color: var(--text);
+  background: var(--raised);
+}
+.feed-post-actions button.active {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+.feed-comments {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.feed-avatar-sm {
+  width: 34px;
+  height: 34px;
+  font-size: 13px;
+}
+.feed-comment {
+  display: flex;
+  gap: 10px;
+}
+.feed-comment-body {
+  flex: 1;
+  min-width: 0;
+}
+.feed-comment-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.feed-comment-author-link {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: inherit;
+  text-decoration: none;
+}
+.feed-comment-author-link:hover strong {
+  text-decoration: underline;
+}
+.comment-menu {
+  position: relative;
+  margin-left: auto;
+}
+.comment-menu > button {
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  border-radius: 999px;
+  color: var(--muted);
+}
+.comment-menu > button:hover {
+  color: var(--text);
+  background: var(--raised);
+}
+.comment-menu-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 190px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px #0004;
+  z-index: 5;
+}
+.comment-menu-panel button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  color: var(--text);
+  background: none;
+}
+.comment-menu-panel button:hover {
+  background: var(--bg);
+}
+.comment-menu-panel button:disabled {
+  opacity: 0.5;
+  cursor: default;
+  background: none;
+}
+.comment-menu-panel button.menu-danger {
+  color: #e5484d;
+}
+.feed-comment-head strong {
+  font-size: 15px;
+}
+.feed-comment-body p {
+  font-size: 15px;
+  line-height: 1.5;
+  margin: 4px 0 6px;
+}
+.feed-comment-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: -8px;
+}
+.feed-comment-actions button {
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.feed-comment-actions button:hover {
+  color: var(--text);
+  background: var(--raised);
+}
+.feed-comment-actions button.active {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+.feed-comments form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+}
+.feed-comments input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+}
+.feed-comments input:focus {
+  outline: none;
+}
+.feed-comments form button {
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 12px;
 }
 /* Mora dentro de ".bulk-collections-toolbar" (mesmo tamanho/formato/hover dos
    outros ícones dali) — só o estado "ligado" precisa de estilo próprio. */
@@ -645,19 +1114,18 @@ h2 {
   letter-spacing: -0.7px;
   margin: 7px 0 0;
 }
-.library-heading h2 {
+.library-summary {
   display: flex;
   align-items: center;
-  gap: 11px;
-}
-.library-heading h2 > span {
-  font-size: 10px;
+  gap: 10px;
   color: var(--muted);
-  background: var(--raised);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  padding: 3px 7px;
-  letter-spacing: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+.library-summary-divider {
+  width: 1px;
+  height: 12px;
+  background: var(--border);
 }
 .library-meta {
   display: flex;
@@ -1051,7 +1519,7 @@ h3 {
   flex: 1;
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(10, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--page-size, 10), minmax(0, 1fr));
   /* "start" (não "center"): um grupo com "Exibir nome" ligado fica mais alto
      que um favorito comum (o rótulo embaixo soma altura) — centralizado, isso
      empurrava os favoritos mais baixos (mais curtos) pra baixo, desalinhando
@@ -1131,7 +1599,7 @@ h3 {
   align-items: center;
 }
 .sphere {
-  --orb: #b9ee78;
+  --orb: #8b5cf6;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1424,7 +1892,7 @@ h3 {
   padding: 35px 15px 45px;
   border: 1px dashed var(--border);
   border-radius: 24px;
-  background: radial-gradient(ellipse at 50% 10%, #b9ee7805, transparent 65%);
+  background: radial-gradient(ellipse at 50% 10%, #8b5cf605, transparent 65%);
 }
 .empty-state > svg {
   margin: 0 auto 20px;
@@ -1467,7 +1935,7 @@ h3 {
   width: 69px;
   height: 69px;
   color: var(--accent);
-  box-shadow: 0 0 45px #b9ee7809;
+  box-shadow: 0 0 45px #8b5cf609;
   transform: none;
 }
 footer {
@@ -1482,9 +1950,6 @@ footer > span:first-child {
   font-weight: 650;
   font-size: 18px;
   letter-spacing: -1px;
-}
-footer .brand-period {
-  margin-left: 0;
 }
 footer p {
   font-size: 10px;
@@ -1786,13 +2251,6 @@ textarea {
   width: 25px;
   height: 25px;
 }
-.bookmark-privacy-header .privacy {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding-top: 0;
-  border-top: 0;
-}
 .collection-bookmarks-editor {
   margin-top: 22px;
   padding-top: 17px;
@@ -2089,7 +2547,7 @@ textarea {
   height: 17px;
   border-radius: 50%;
   background: #fff;
-  color: #242823;
+  color: #0f172a;
   transition: transform 0.2s;
 }
 .switch.on {
@@ -2335,9 +2793,6 @@ textarea {
   }
   .soon {
     display: none;
-  }
-  .library-heading h2 {
-    font-size: 20px;
   }
   .library-meta {
     flex-direction: column;

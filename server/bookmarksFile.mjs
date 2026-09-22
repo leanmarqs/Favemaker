@@ -3,20 +3,28 @@ import { load } from "cheerio";
 // Formato "Netscape Bookmark File" — o HTML padronizado que Chrome, Firefox,
 // Edge, Safari e a maioria dos navegadores geram na própria função "Exportar
 // favoritos". Genérico de propósito (sem nenhuma regra específica do
-// Pinicon, como limite de profundidade): quem decide o que fazer com pastas
+// Like My Links, como limite de profundidade): quem decide o que fazer com pastas
 // aninhadas é a rota /api/import em index.mjs, não este módulo.
 //
 // Estrutura real (confirmada testando com cheerio): um <DT> com <A> filho é
 // um favorito; um <DT> com <H3> filho é uma pasta, e o conteúdo dela é o
 // <DL> que aparece como IRMÃO do <H3> dentro desse mesmo <DT> (não como
 // filho do <DL> pai).
+// Limite de profundidade de pastas aninhadas: nenhum export de navegador de
+// verdade passa disso — só existe pra impedir que um arquivo malicioso (HTML
+// gerado à mão com milhares de <DL> aninhados) estoure a pilha de chamadas
+// dessa recursão, já que o tamanho do corpo (20mb, ver index.mjs) sozinho não
+// limita a profundidade da árvore.
+const MAX_DEPTH = 50;
+
 export function parseBookmarksHtml(html) {
   const $ = load(html);
   const rootDl = $("dl").first();
-  return rootDl.length ? walkDl($, rootDl) : [];
+  return rootDl.length ? walkDl($, rootDl, 0) : [];
 }
 
-function walkDl($, $dl) {
+function walkDl($, $dl, depth) {
+  if (depth > MAX_DEPTH) return [];
   const nodes = [];
   $dl.children("dt").each((_, dtEl) => {
     const $dt = $(dtEl);
@@ -34,7 +42,7 @@ function walkDl($, $dl) {
       nodes.push({
         type: "folder",
         name: $h3.text().trim() || "Pasta",
-        children: $childDl.length ? walkDl($, $childDl) : [],
+        children: $childDl.length ? walkDl($, $childDl, depth + 1) : [],
       });
     }
   });
@@ -52,8 +60,8 @@ function renderBookmark(bookmark) {
 }
 
 // Grupos viram uma subpasta dentro da pasta da coleção — só um nível, já que
-// o Pinicon também só suporta um nível de agrupamento — o que faz o roundtrip
-// (exportar e reimportar, no Pinicon ou em qualquer navegador) preservar a
+// o Like My Links também só suporta um nível de agrupamento — o que faz o roundtrip
+// (exportar e reimportar, no Like My Links ou em qualquer navegador) preservar a
 // estrutura sem perdas.
 function renderFolder(name, bookmarks, groups) {
   const items = [

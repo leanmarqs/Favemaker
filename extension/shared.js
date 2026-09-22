@@ -2,7 +2,7 @@
 // Mantida sem dependências externas para poder rodar nos dois contextos.
 
 export const DEFAULT_BASE_URL = "http://localhost:3000";
-export const DEFAULT_COLOR = "#b9ee78";
+export const DEFAULT_COLOR = "#8b5cf6";
 
 export async function getSettings() {
   const { baseUrl, lastCollectionId, lastGroupId } =
@@ -26,12 +26,12 @@ export async function setSettings(partial) {
   await chrome.storage.local.set(partial);
 }
 
-// pinicon_session é HttpOnly (não aparece em document.cookie), mas chrome.cookies
-// pode lê-lo porque a extensão declarou host_permissions para a origem do Pinicon —
+// likemylinks_session é HttpOnly (não aparece em document.cookie), mas chrome.cookies
+// pode lê-lo porque a extensão declarou host_permissions para a origem do Like My Links —
 // é a forma correta e prevista de uma extensão de primeira parte se autenticar.
 async function getSessionToken(baseUrl) {
   try {
-    const cookie = await chrome.cookies.get({ url: baseUrl, name: "pinicon_session" });
+    const cookie = await chrome.cookies.get({ url: baseUrl, name: "likemylinks_session" });
     return cookie?.value || "";
   } catch {
     return "";
@@ -42,13 +42,13 @@ export async function apiFetch(baseUrl, path, options = {}) {
   const token = await getSessionToken(baseUrl);
   const headers = { ...(options.headers || {}) };
   if (options.body) headers["Content-Type"] = "application/json";
-  if (token) headers["X-Pinicon-Session"] = token;
+  if (token) headers["X-LikeMyLinks-Session"] = token;
   const res = await fetch(`${baseUrl}${path}`, { ...options, headers });
   let data = null;
   try {
     data = await res.json();
   } catch {}
-  if (!res.ok) throw new Error(data?.error || `Erro ${res.status} ao falar com o Pinicon.`);
+  if (!res.ok) throw new Error(data?.error || `Erro ${res.status} ao falar com o Like My Links.`);
   return data;
 }
 
@@ -97,7 +97,7 @@ export async function createBookmark(baseUrl, bookmark) {
 }
 
 // Mesmo endpoint usado pela barra de busca do site e pelo menu de contexto
-// ("Salvar no Pinicon" num link): o servidor busca a página e decide nome,
+// ("Salvar no Like My Links" num link): o servidor busca a página e decide nome,
 // descrição e imagem (preferindo o og:image/twitter:image do conteúdo em vez
 // do favicon do site quando a URL não é a home genérica — ver server/metadata.mjs).
 // `favicon` já vem como data URI pronta para reenviar direto em createBookmark.
@@ -161,7 +161,7 @@ function scrapeActiveImage() {
     (v) => v.readyState >= 2 && v.videoWidth,
   );
   if (!video) {
-    console.warn("[Pinicon] nenhum <video> com frame carregado encontrado na página.");
+    console.warn("[LikeMyLinks] nenhum <video> com frame carregado encontrado na página.");
     return "";
   }
   try {
@@ -178,7 +178,7 @@ function scrapeActiveImage() {
     // captura desse mesmo elemento de vídeo, em qualquer instante, esbarra no
     // mesmo bloqueio — por isso deixar o usuário escolher o frame manualmente
     // não resolveria esse erro específico.
-    console.warn("[Pinicon] falha ao capturar frame do vídeo:", error.message);
+    console.warn("[LikeMyLinks] falha ao capturar frame do vídeo:", error.message);
     return "";
   }
 }

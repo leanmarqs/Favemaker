@@ -1,7 +1,9 @@
 import "dotenv/config";
 import express from "express";
+import helmet from "helmet";
 import { PrismaClient } from "@prisma/client";
 import { installAuth } from "./auth.mjs";
+import { installCommunity } from "./community.mjs";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { metadata, normalizeUrl, resolveImage } from "./metadata.mjs";
@@ -30,33 +32,71 @@ const developmentOrigins = new Set([
   "http://127.0.0.1:3000",
 ]);
 
-// Origens de extensões de navegador (ex: a extensão "Salvar no Pinicon"). Uma página
+// Origens de extensões de navegador (ex: a extensão "Salvar no Like My Links"). Uma página
 // maliciosa nunca tem essa origem — só uma extensão instalada pelo próprio usuário.
 function isExtensionOrigin(origin) {
   return /^(chrome|moz)-extension:\/\//.test(origin || "");
 }
 
+// Requisições sem Origin (curl, apps não-navegador) não são o público desta
+// API — quem legitimamente muda estado aqui é sempre o navegador (frontend
+// same-origin ou a extensão), e ambos sempre mandam esse header em métodos
+// não seguros. Exigir que ele exista e seja reconhecido fecha o único jeito
+// de contornar essa checagem apenas omitindo o header.
 function hasAllowedOrigin(req) {
   const origin = req.headers.origin;
-  if (!origin) return true;
+  if (!origin) return false;
   if (new URL(origin).host === req.headers.host) return true;
   if (isExtensionOrigin(origin)) return true;
   return process.env.NODE_ENV !== "production" && developmentOrigins.has(origin);
 }
 
+if (process.env.NODE_ENV !== "production")
+  console.warn(
+    "Aviso: NODE_ENV não é \"production\" — o cookie de sessão não terá a flag Secure. " +
+      "Garanta que NODE_ENV=production esteja definido no deploy real.",
+  );
+
 app.disable("x-powered-by");
+// Cabeçalhos de segurança (CSP, no-sniff, no-framing, HSTS, etc.). CSP restrita
+// porque o build de produção é uma SPA de origem única sem scripts inline: só
+// os favicons/avatares (sempre convertidos em data URI por resolveImage, nunca
+// URL externa) precisam de "data:" em img-src. crossOriginResourcePolicy fica
+// em "cross-origin" pra não quebrar a extensão do navegador, que lê as
+// respostas da API a partir da própria origem dela (chrome-extension://…),
+// já liberada explicitamente pelo middleware de CORS abaixo.
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:"],
+        fontSrc: ["'self'"],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'none'"],
+      },
+    },
+    frameguard: { action: "deny" },
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  }),
+);
 // 20mb (não 3mb): um export de favoritos do Firefox embute o favicon de cada
 // item como data URI dentro do próprio HTML, e pode passar de alguns MB numa
 // biblioteca grande — /api/import recebe esse HTML inteiro como corpo JSON.
 app.use(express.json({ limit: "20mb" }));
 // CORS para extensões de navegador: elas rodam numa origem própria (chrome-extension://…)
-// e autenticam com o header X-Pinicon-Session (ver cookieToken em auth.mjs) em vez do
+// e autenticam com o header X-LikeMyLinks-Session (ver cookieToken em auth.mjs) em vez do
 // cookie de sessão, então precisam de uma resposta CORS explícita para ler o resultado.
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (isExtensionOrigin(origin)) {
     res.set("Access-Control-Allow-Origin", origin);
-    res.set("Access-Control-Allow-Headers", "Content-Type, X-Pinicon-Session");
+    res.set("Access-Control-Allow-Headers", "Content-Type, X-LikeMyLinks-Session");
     res.set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
     if (req.method === "OPTIONS") return res.sendStatus(204);
   }
@@ -68,35 +108,82 @@ app.use("/api", (req, res, next) => {
     return res.status(403).json({ error: "Origem não permitida." });
   next();
 });
+// Página de perfil público (App.tsx, ?perfil=<id>), inspirada no Twitter:
+// avatar/nome/usuário, "entrou em", seguidores e as coleções públicas do
+// dono. owner vem null quando o id não corresponde a nenhuma conta real —
+// caso dos autores fictícios do feed da Comunidade (ver communityMock.ts),
+// que não têm Owner por trás; o frontend usa nome/usuário/cor recebidos na
+// própria URL como fallback de exibição nesse caso (ver publicProfileHref
+// em Community.tsx).
 app.get("/api/public/:id", async (req, res) => {
-  const collections = await prisma.collection.findMany({
-    where: { ownerId: req.params.id, isPublic: true },
-    // Sem isso, o Postgres não garante nenhuma ordem estável entre consultas
-    // — um UPDATE em qualquer coleção (ex: o chevron de expandir/recolher,
-    // que só mexe em "behavior") pode mudar a posição física da linha e fazer
-    // a coleção "pular" de lugar na lista, mesmo sem relação nenhuma com sua
-    // ordem de exibição. "order" é a posição escolhida (arrastar/"Ordenar
-    // A-Z"); createdAt é só o desempate pras que nunca foram reordenadas.
-    orderBy: [{ order: "asc" }, { createdAt: "asc" }],
-    include: {
-      bookmarks: {
-        where: { isPublic: true, groupId: null },
-        orderBy: [{ order: "asc" }, { createdAt: "asc" }],
-      },
-      groups: {
-        include: {
-          bookmarks: {
-            where: { isPublic: true },
-            orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+  const [owner, collections, followerCount] = await Promise.all([
+    prisma.owner.findUnique({
+      where: { id: req.params.id },
+      select: { username: true, displayName: true, avatar: true, createdAt: true },
+    }),
+    prisma.collection.findMany({
+      where: { ownerId: req.params.id, isPublic: true },
+      // Sem isso, o Postgres não garante nenhuma ordem estável entre consultas
+      // — um UPDATE em qualquer coleção (ex: o chevron de expandir/recolher,
+      // que só mexe em "behavior") pode mudar a posição física da linha e fazer
+      // a coleção "pular" de lugar na lista, mesmo sem relação nenhuma com sua
+      // ordem de exibição. "order" é a posição escolhida (arrastar/"Ordenar
+      // A-Z"); createdAt é só o desempate pras que nunca foram reordenadas.
+      orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+      // Sem "where: isPublic" nos favoritos: um favorito não tem visibilidade
+      // própria (ver comentário no schema.prisma) — a coleção já filtrada
+      // acima como pública cobre todos os favoritos dela.
+      include: {
+        bookmarks: {
+          where: { groupId: null },
+          orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+        },
+        groups: {
+          include: {
+            bookmarks: {
+              orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+            },
           },
         },
       },
-    },
+    }),
+    prisma.communityFollow.count({ where: { authorId: req.params.id } }),
+  ]);
+  res.json({
+    collections,
+    profile: owner
+      ? {
+          name: owner.displayName || owner.username || "Usuário",
+          username: owner.username || "",
+          avatar: owner.avatar || "",
+          memberSince: owner.createdAt,
+          followerCount,
+        }
+      : null,
   });
-  res.json({ collections });
 });
 // Public profiles stay accessible; all personal routes below require a session.
 installAuth(app, prisma);
+// Limite geral por dono pra toda a API autenticada — defesa contra abuso
+// automatizado (script rodando em loop, sessão comprometida) que nenhuma das
+// rotas individuais cobre. Mais generoso que o limite específico de
+// /api/metadata|/api/icon logo abaixo, que é mais apertado por envolver
+// requisição de rede a um site de terceiros.
+const apiLimits = new Map();
+app.use("/api", (req, res, next) => {
+  if (!req.owner) return next();
+  const now = Date.now();
+  const current = apiLimits.get(req.owner.id) || { start: now, count: 0 };
+  if (now - current.start > 60000) {
+    current.start = now;
+    current.count = 0;
+  }
+  if (++current.count > 300)
+    return res.status(429).json({ error: "Muitas requisições. Aguarde um minuto." });
+  apiLimits.set(req.owner.id, current);
+  next();
+});
+installCommunity(app, prisma);
 // Busca por nome/descrição/URL nos favoritos do próprio dono — Postgres full
 // text search (to_tsvector/websearch_to_tsquery), sem depender de nenhum
 // serviço externo. websearch_to_tsquery aceita entrada de usuário "crua" (com
@@ -107,7 +194,7 @@ app.get("/api/search", async (req, res) => {
   if (!q || q.length > 200) return res.json({ results: [] });
   const results = await prisma.$queryRaw`
     SELECT b.id, b.name, b.url, b.description, b.favicon, b.color,
-           b."isPublic", b."collectionId", c.name AS "collectionName"
+           c."isPublic", b."collectionId", c.name AS "collectionName"
     FROM "Bookmark" b
     JOIN "Collection" c ON c.id = b."collectionId"
     WHERE c."ownerId" = ${req.owner.id}
@@ -156,6 +243,32 @@ function fields(body) {
     description: body.description,
     color: body.color,
     isPublic: body.isPublic,
+  };
+}
+// Campos de um favorito — sem isPublic de propósito: um favorito não decide
+// a própria visibilidade, sempre herda a da coleção (ver comentário no
+// schema.prisma, model Bookmark). Diferente de fields() (usado só por
+// coleção), que ainda valida/guarda isPublic normalmente.
+function bookmarkBaseFields(body) {
+  if (
+    typeof body.name !== "string" ||
+    !body.name.trim() ||
+    body.name.length > 120
+  )
+    throw Object.assign(new Error("Informe um nome de até 120 caracteres."), {
+      status: 400,
+    });
+  if (!/^#[0-9a-f]{6}$/i.test(body.color))
+    throw Object.assign(new Error("Cor inválida."), { status: 400 });
+  if (typeof body.description !== "string" || body.description.length > 2000)
+    throw Object.assign(
+      new Error("A descrição deve ter até 2.000 caracteres."),
+      { status: 400 },
+    );
+  return {
+    name: body.name.trim(),
+    description: body.description,
+    color: body.color,
   };
 }
 function shape(body) {
@@ -216,27 +329,29 @@ function groupFields(body) {
     );
   return {
     name: body.name.trim(),
-    color: body.color || "#b9ee78",
+    color: body.color || "#8b5cf6",
     description: typeof body.description === "string" ? body.description : "",
     showName: Boolean(body.showName),
     shape: groupShape(body),
   };
 }
-app.post("/api/collections", async (req, res) =>
+app.post("/api/collections", async (req, res) => {
+  const data = fields(req.body);
   res
     .status(201)
     .json(
       await prisma.collection.create({
         data: {
-          ...fields(req.body),
+          ...data,
           shape: shape(req.body),
           behavior: behavior(req.body),
           ownerId: req.owner.id,
+          publishedAt: data.isPublic ? new Date() : null,
         },
         include: { bookmarks: true },
       }),
-    ),
-);
+    );
+});
 // Reordena a lista "Suas coleções" do dono — usada tanto por "Ordenar A-Z"
 // quanto por arrastar uma coleção pra outra posição. Precisa vir antes do
 // PATCH /api/collections/:id abaixo, senão "reorder" seria lido como um :id.
@@ -268,11 +383,17 @@ app.patch("/api/collections/reorder", async (req, res) => {
   res.sendStatus(204);
 });
 app.patch("/api/collections/:id", async (req, res) => {
-  await collection(req, req.params.id);
+  const existing = await collection(req, req.params.id);
+  const data = { ...fields(req.body), shape: shape(req.body), behavior: behavior(req.body) };
+  // Marca "publicada agora" só na transição privada → pública — voltar a
+  // ficar pública depois de um tempo privada conta como nova publicação
+  // (sobe pro topo do feed da Comunidade), mas alternar sem sair do público
+  // (ex: outro campo do formulário) não deve mexer na data.
+  if (data.isPublic && !existing.isPublic) data.publishedAt = new Date();
   res.json(
     await prisma.collection.update({
       where: { id: req.params.id },
-      data: { ...fields(req.body), shape: shape(req.body), behavior: behavior(req.body) },
+      data,
     }),
   );
 });
@@ -283,7 +404,7 @@ app.delete("/api/collections/:id", async (req, res) => {
 });
 async function bookmarkFields(req) {
   await collection(req, req.body.collectionId);
-  const data = fields(req.body);
+  const data = bookmarkBaseFields(req.body);
   let url;
   let icon;
   try {
@@ -321,6 +442,112 @@ app.post("/api/bookmarks", async (req, res) =>
     .status(201)
     .json(await prisma.bookmark.create({ data: await bookmarkFields(req) })),
 );
+// Busca (ou cria, se ainda não existir) a coleção reservada "Itens Salvos" do
+// dono logado — usada tanto pra criar quanto pra ler as cópias já salvas (ver
+// GET/POST /api/saved-items abaixo). Corrida entre duas criações simultâneas
+// (ex: duplo clique bem rápido) é resolvida pelo índice único parcial
+// Collection_ownerId_isSavedItems_unique (ver schema.prisma): a segunda
+// tentativa de criar simplesmente relê a que a primeira acabou de criar, em
+// vez de falhar pro usuário.
+async function savedItemsCollection(ownerId) {
+  const existing = await prisma.collection.findFirst({
+    where: { ownerId, isSavedItems: true },
+  });
+  if (existing) return existing;
+  try {
+    return await prisma.collection.create({
+      data: { ownerId, name: "Itens Salvos", isSavedItems: true },
+    });
+  } catch (e) {
+    if (e.code === "P2002")
+      return prisma.collection.findFirstOrThrow({
+        where: { ownerId, isSavedItems: true },
+      });
+    throw e;
+  }
+}
+function savedItemFields(body) {
+  if (typeof body.name !== "string" || !body.name.trim() || body.name.length > 120)
+    throw Object.assign(new Error("Nome do favorito inválido."), {
+      status: 400,
+    });
+  if (typeof body.url !== "string" || !body.url.trim() || body.url.length > 2000)
+    throw Object.assign(new Error("URL do favorito inválida."), {
+      status: 400,
+    });
+  return {
+    name: body.name.trim(),
+    url: body.url.trim(),
+    description:
+      typeof body.description === "string" ? body.description.slice(0, 2000) : "",
+    favicon: typeof body.favicon === "string" ? body.favicon : "",
+    color: /^#[0-9a-f]{6}$/i.test(body.color) ? body.color : "#8b5cf6",
+  };
+}
+// Ids (savedFromId) já favoritados pelo dono logado — usado pra acender o
+// coração no card de prévia de cada favicon (ver App.tsx), tanto em "Suas
+// coleções" quanto no perfil público de outro dono ou num favicon da
+// Comunidade, já que o "Itens Salvos" é sempre do visitante, não de quem está
+// sendo visitado.
+app.get("/api/saved-items", async (req, res) => {
+  const saved = await prisma.collection.findFirst({
+    where: { ownerId: req.owner.id, isSavedItems: true },
+    include: { bookmarks: { select: { savedFromId: true } } },
+  });
+  res.json({
+    savedFromIds: (saved?.bookmarks || [])
+      .map((b) => b.savedFromId)
+      .filter((id) => id !== null),
+  });
+});
+// Alterna favoritar um item específico (o coração de cada favicon, não o
+// "Salvar" da coleção/publicação inteira) — cria ou remove uma CÓPIA dele
+// dentro de "Itens Salvos", nunca edita o original. Funciona tanto pro
+// próprio favorito quanto pro público de outro dono ou de uma publicação da
+// Comunidade, por isso fica fora do middleware de posse de
+// /api/bookmarks/:id (o "original" pode nem pertencer a este dono, ou nem
+// ter linha própria no banco — ver comentário de Bookmark.savedFromId): o
+// cliente manda os campos do favorito que já tem em mãos, sem o servidor
+// precisar localizá-lo em lugar nenhum.
+app.post("/api/saved-items/:sourceId", async (req, res) => {
+  const sourceId = req.params.sourceId;
+  if (typeof sourceId !== "string" || !sourceId.trim() || sourceId.length > 80)
+    throw Object.assign(new Error("Favorito inválido."), { status: 400 });
+  const existingCollection = await prisma.collection.findFirst({
+    where: { ownerId: req.owner.id, isSavedItems: true },
+  });
+  if (existingCollection) {
+    const existingCopy = await prisma.bookmark.findFirst({
+      where: { collectionId: existingCollection.id, savedFromId: sourceId },
+    });
+    if (existingCopy) {
+      await prisma.bookmark.delete({ where: { id: existingCopy.id } });
+      const remaining = await prisma.bookmark.count({
+        where: { collectionId: existingCollection.id },
+      });
+      // Some da lista "Suas coleções" assim que fica vazia — ela só existe
+      // enquanto tiver pelo menos um favorito salvo; a próxima vez que o dono
+      // favoritar algo, savedItemsCollection() recria do zero.
+      if (remaining === 0)
+        await prisma.collection.delete({ where: { id: existingCollection.id } });
+      return res.json({ active: false });
+    }
+  }
+  const data = savedItemFields(req.body);
+  const targetCollection =
+    existingCollection || (await savedItemsCollection(req.owner.id));
+  try {
+    await prisma.bookmark.create({
+      data: { ...data, collectionId: targetCollection.id, savedFromId: sourceId },
+    });
+  } catch (e) {
+    // Duplo clique bem rápido pode mandar dois POSTs de "salvar" antes do
+    // primeiro terminar — o índice único (collectionId, savedFromId) barra a
+    // segunda cópia; trata como sucesso (já está salvo) em vez de erro.
+    if (e.code !== "P2002") throw e;
+  }
+  res.status(201).json({ active: true });
+});
 // Reordena (e opcionalmente move de grupo) uma lista inteira de favoritos de
 // uma vez — usada ao arrastar um ícone para uma posição específica da lista
 // (entre dois outros) ou para dentro de uma seção. O cliente manda a lista
@@ -485,7 +712,7 @@ app.post(["/api/metadata", "/api/icon"], async (req, res) => {
     res.status(400).json({ error: e.message });
   }
 });
-// Achata pastas aninhadas além de um nível: o Pinicon só tem coleção → grupo →
+// Achata pastas aninhadas além de um nível: o Like My Links só tem coleção → grupo →
 // favorito, então uma pasta dentro de um grupo perde só o próprio nome —
 // nenhum favorito é descartado.
 function flattenBookmarks(nodes) {
@@ -517,8 +744,7 @@ async function createImportedBookmark(node, collectionId, groupId) {
       url,
       description: "",
       favicon,
-      color: "#b9ee78",
-      isPublic: false,
+      color: "#8b5cf6",
       collectionId,
       groupId: groupId || null,
     },
@@ -546,6 +772,21 @@ async function enrichImportedFavicons(ids) {
     Array.from({ length: Math.min(CONCURRENCY, ids.length) }, worker),
   );
 }
+// Teto de itens por importação: sem isso, um arquivo de favoritos malicioso
+// (não uma biblioteca real de usuário, que fica na casa das centenas/poucos
+// milhares) poderia forçar centenas de milhares de INSERTs numa única
+// requisição e travar o processo por minutos — o limite de 20mb no corpo (ver
+// express.json acima) não limita a CONTAGEM de itens, só o texto bruto do
+// HTML, que pode ser bem compacto e ainda assim descrever muitos itens.
+const MAX_IMPORT_ITEMS = 20000;
+function countNodes(nodes) {
+  let total = 0;
+  for (const node of nodes) {
+    total++;
+    if (node.type === "folder") total += countNodes(node.children);
+  }
+  return total;
+}
 app.post("/api/import", async (req, res) => {
   const html = req.body.html;
   if (typeof html !== "string" || !html.trim())
@@ -553,6 +794,11 @@ app.post("/api/import", async (req, res) => {
       status: 400,
     });
   const tree = parseBookmarksHtml(html);
+  if (countNodes(tree) > MAX_IMPORT_ITEMS)
+    throw Object.assign(
+      new Error(`Esse arquivo tem itens demais (limite de ${MAX_IMPORT_ITEMS}).`),
+      { status: 400 },
+    );
   const rootFolders = tree.filter((n) => n.type === "folder");
   const rootLoose = tree.filter((n) => n.type === "bookmark");
   let collections = 0;
@@ -570,7 +816,7 @@ app.post("/api/import", async (req, res) => {
       data: {
         name: name.slice(0, 120),
         description: "",
-        color: "#b9ee78",
+        color: "#8b5cf6",
         isPublic: false,
         shape: "rounded",
         behavior: "expansive",
@@ -591,7 +837,7 @@ app.post("/api/import", async (req, res) => {
         const grp = await prisma.bookmarkGroup.create({
           data: {
             name: child.name.slice(0, 120),
-            color: "#b9ee78",
+            color: "#8b5cf6",
             collectionId: col.id,
             display: "section",
           },
@@ -627,12 +873,15 @@ app.get("/api/export", async (req, res) => {
   });
   const html = buildBookmarksHtml(collections);
   res.set("Content-Type", "text/html; charset=utf-8");
-  res.set("Content-Disposition", 'attachment; filename="pinicon-favoritos.html"');
+  res.set("Content-Disposition", 'attachment; filename="likemylinks-favoritos.html"');
   res.send(html);
 });
 const cleanup = setInterval(() => {
+  const now = Date.now();
   for (const [key, value] of limits)
-    if (Date.now() - value.start > 60000) limits.delete(key);
+    if (now - value.start > 60000) limits.delete(key);
+  for (const [key, value] of apiLimits)
+    if (now - value.start > 60000) apiLimits.delete(key);
 }, 60000);
 cleanup.unref();
 app.use("/api", (_req, res) =>
@@ -662,7 +911,7 @@ if (
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   app.listen(Number(process.env.PORT || 3001), () =>
-    console.log("Pinicon disponível na porta " + (process.env.PORT || 3001)),
+    console.log("Like My Links disponível na porta " + (process.env.PORT || 3001)),
   );
   // Só no servidor de verdade — importar este arquivo pra teste (ver
   // tests/api.test.mjs) não deve disparar checagens de link de fundo.

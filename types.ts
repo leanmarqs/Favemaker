@@ -17,7 +17,12 @@ export interface Bookmark {
   description: string;
   favicon: string;
   color: string;
-  isPublic: boolean;
+  // Um favorito não tem visibilidade própria: o servidor nunca guarda nem
+  // devolve este campo (sempre herda o isPublic da coleção dona — ver
+  // comentário no schema.prisma). Só existe aqui como opcional pro App.tsx
+  // conseguir calculá-lo na hora (a partir da coleção) pro filtro global
+  // "Públicos"/"Privados" em "Suas coleções".
+  isPublic?: boolean;
   order?: number;
   // "unknown" (nunca verificado) | "ok" | "broken" — ver server/linkCheck.mjs.
   // Só afeta a aparência do ícone (decolorido quando "broken"), nunca some

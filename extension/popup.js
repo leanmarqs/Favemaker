@@ -300,13 +300,12 @@ async function init() {
         name: (els.previewName.value || "Sem título").slice(0, 120),
         description: (els.previewDescription.value || "").slice(0, 2000),
         color: scraped.color || DEFAULT_COLOR,
-        isPublic: false,
         url: scraped.url,
         favicon: scraped.favicon,
         collectionId: els.collectionSelect.value,
         groupId: els.sectionSelect.value || null,
       });
-      setFeedback("Salvo no Pinicon!", "success");
+      setFeedback("Salvo no Like My Links!", "success");
     } catch (error) {
       setFeedback(error.message, "error");
     } finally {

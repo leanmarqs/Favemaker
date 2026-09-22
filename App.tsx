@@ -4,11 +4,13 @@ import {
   ArrowUpAZ,
   ArrowUpRight,
   Bookmark as BookmarkIcon,
+  CalendarDays,
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  Construction,
   Folder,
   Globe2,
   GripVertical,
@@ -26,6 +28,7 @@ import {
   Sun,
   Trash2,
   User,
+  Users,
   X,
   Upload,
   Copy,
@@ -33,6 +36,8 @@ import {
 } from "lucide-react";
 import type { Account, Bookmark, BookmarkGroup, Collection } from "./types";
 import PasswordField from "./PasswordField";
+import CommunityFeed from "./Community";
+import { mockCollectionsByAuthor } from "./communityMock";
 import "./styles.css";
 
 type GoogleTokenClient = { requestAccessToken: () => void };
@@ -53,7 +58,7 @@ declare global {
   }
 }
 
-async function api(path: string, method = "GET", body?: unknown) {
+export async function api(path: string, method = "GET", body?: unknown) {
   const res = await fetch(`/api${path}`, {
     method,
     headers: { "Content-Type": "application/json" },
@@ -62,7 +67,7 @@ async function api(path: string, method = "GET", body?: unknown) {
   if (res.status === 204) return null;
   const data = await res
     .json()
-    .catch(() => ({ error: "Não foi possível conectar ao Pinicon." }));
+    .catch(() => ({ error: "Não foi possível conectar ao Like My Links." }));
   if (!res.ok)
     throw new Error(data.error || "Não foi possível concluir a operação.");
   return data;
@@ -70,7 +75,7 @@ async function api(path: string, method = "GET", body?: unknown) {
 const blank = {
   name: "",
   description: "",
-  color: "#b9ee78",
+  color: "#8b5cf6",
   isPublic: false,
   url: "",
   favicon: "",
@@ -230,10 +235,15 @@ function GroupTile({
     </button>
   );
 }
-function CollectionRow({
+export function CollectionRow({
   collection,
   readOnly,
   toolbarsEnabled,
+  // Quantos itens cabem numa "página" do pill fixo (setas de navegação) antes
+  // de precisar da seta pra ver o resto — 10 é o valor de sempre em "Suas
+  // coleções"; o feed da Comunidade usa um valor menor (ver Community.tsx)
+  // porque o card ali é bem mais estreito.
+  pageSize = 10,
   likedIds,
   bookmarkedIds,
   edit,
@@ -245,7 +255,6 @@ function CollectionRow({
   toggleLiked,
   toggleBookmarked,
   shareBookmark,
-  toggleVisibility,
   toggleBehavior,
   createGroup,
   moveToGroup,
@@ -258,6 +267,7 @@ function CollectionRow({
   collection: Collection;
   readOnly: boolean;
   toolbarsEnabled: boolean;
+  pageSize?: number;
   likedIds: string[];
   bookmarkedIds: string[];
   edit: () => void;
@@ -269,7 +279,6 @@ function CollectionRow({
   toggleLiked: (bookmark: Bookmark) => void;
   toggleBookmarked: (bookmark: Bookmark) => void;
   shareBookmark: (bookmark: Bookmark) => void;
-  toggleVisibility: (bookmark: Bookmark) => void;
   toggleBehavior: (collection: Collection) => void;
   createGroup: (
     collectionId: string,
@@ -429,7 +438,7 @@ function CollectionRow({
   const totalBookmarks =
     collection.bookmarks.length +
     collection.groups.reduce((sum, g) => sum + g.bookmarks.length, 0);
-  const pages = Math.max(1, Math.ceil(items.length / 10));
+  const pages = Math.max(1, Math.ceil(items.length / pageSize));
   const active = Math.min(page, pages - 1);
   const sortedItems = sortDirection
     ? [...items].sort((a, b) =>
@@ -794,38 +803,6 @@ function CollectionRow({
             </button>
             <button
               type="button"
-              aria-label={
-                toolbar.bookmark.isPublic ? "Tornar privado" : "Tornar público"
-              }
-              title={toolbar.bookmark.isPublic ? "Privar" : "Exibir"}
-              className={!toolbar.bookmark.isPublic ? "active" : ""}
-              onClick={() => {
-                const bookmark = toolbar.bookmark;
-                // Atualiza a barra na hora (o ícone reflete o próximo estado antes da
-                // resposta do servidor); sem isso, ela só refletia o novo estado depois
-                // que o mouse saía e voltava a passar sobre o ícone.
-                setBookmarkToolbar((current) =>
-                  current?.bookmark.id === bookmark.id
-                    ? {
-                        ...current,
-                        bookmark: {
-                          ...current.bookmark,
-                          isPublic: !current.bookmark.isPublic,
-                        },
-                      }
-                    : current,
-                );
-                toggleVisibility(bookmark);
-              }}
-            >
-              {toolbar.bookmark.isPublic ? (
-                <LockOpen size={13} />
-              ) : (
-                <Lock size={13} />
-              )}
-            </button>
-            <button
-              type="button"
               aria-label={`Excluir favorito ${toolbar.bookmark.name}`}
               title="Excluir"
               onClick={() => removeBookmark(toolbar.bookmark)}
@@ -867,15 +844,17 @@ function CollectionRow({
                     )}
                   </span>
                 )}
-                <button
-                  type="button"
-                  className="favorite-preview-edit"
-                  aria-label={`Editar favorito ${preview.bookmark.name}`}
-                  title="Editar"
-                  onClick={() => editBookmark(preview.bookmark)}
-                >
-                  <Pencil size={13} />
-                </button>
+                {!readOnly && (
+                  <button
+                    type="button"
+                    className="favorite-preview-edit"
+                    aria-label={`Editar favorito ${preview.bookmark.name}`}
+                    title="Editar"
+                    onClick={() => editBookmark(preview.bookmark)}
+                  >
+                    <Pencil size={13} />
+                  </button>
+                )}
                 <strong className="favorite-preview-name">
                   {preview.bookmark.name}
                 </strong>
@@ -1137,11 +1116,16 @@ function CollectionRow({
         <div
           key={isExpanded ? "expanded" : active}
           className={`favorites favorites-${direction} ${isPageTransitioning ? "favorites-leaving" : "favorites-entering"}`}
+          // Nº de colunas do grid = pageSize: sem isso, uma página com menos de
+          // 10 itens (ver pageSize) ainda dividia a pílula em 10 células fixas,
+          // espremendo os itens reais nas primeiras colunas em vez de usar a
+          // largura toda disponível pra eles.
+          style={{ "--page-size": pageSize } as React.CSSProperties}
           aria-live="polite"
         >
           {(isExpanded
             ? sortedItems
-            : sortedItems.slice(active * 10, active * 10 + 10)
+            : sortedItems.slice(active * pageSize, active * pageSize + pageSize)
           ).map((item) => (
             <div
               className={`favorite ${
@@ -1307,8 +1291,8 @@ function CollectionRow({
       </div>
       {!isExpanded && pages > 1 && (
         <p className="page-info">
-          {active * 10 + 1}–
-          {Math.min(active * 10 + 10, items.length)} de{" "}
+          {active * pageSize + 1}–
+          {Math.min(active * pageSize + pageSize, items.length)} de{" "}
           {items.length} favoritos
         </p>
       )}
@@ -1586,24 +1570,29 @@ function CollectionRow({
           {canEditGroup && (
             <div className="group-dialog-fields">
               <label>
-                Nome
+                Nome{openGroupLive.display === "section" && " *"}
                 <input
                   maxLength={120}
                   value={groupName}
                   onChange={(e) => setGroupName(e.target.value)}
                 />
               </label>
-              <label className="checkbox-field">
-                <input
-                  type="checkbox"
-                  checked={groupShowName}
-                  onChange={(e) => setGroupShowName(e.target.checked)}
-                />
-                Exibir nome
-              </label>
+              {openGroupLive.display !== "section" && (
+                <label className="checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={groupShowName}
+                    onChange={(e) => setGroupShowName(e.target.checked)}
+                  />
+                  Exibir nome
+                </label>
+              )}
               <label>
                 <span>
-                  Descrição <span className="optional">opcional</span>
+                  Descrição
+                  {openGroupLive.display !== "section" && (
+                    <span className="optional">opcional</span>
+                  )}
                 </span>
                 <textarea
                   rows={2}
@@ -1700,7 +1689,7 @@ function CollectionRow({
               </label>
               <div className="color-picker">
                 {[
-                  "#b9ee78",
+                  "#8b5cf6",
                   "#7cc9ec",
                   "#ae9cf4",
                   "#eea4c3",
@@ -1718,6 +1707,12 @@ function CollectionRow({
                     {groupColor === color && <Check size={18} />}
                   </button>
                 ))}
+                <input
+                  type="color"
+                  aria-label="Escolher outra cor"
+                  value={groupColor}
+                  onChange={(e) => setGroupColor(e.target.value)}
+                />
               </div>
             </div>
           )}
@@ -1813,8 +1808,27 @@ export default function App({
   onLogout,
   googleClientId,
 }: { account?: Account; onLogout?: () => void; googleClientId?: string } = {}) {
-  const sharedId = new URLSearchParams(location.search).get("perfil");
+  const shareParams = new URLSearchParams(location.search);
+  const sharedId = shareParams.get("perfil");
   const readOnly = Boolean(sharedId);
+  // Fallback de exibição (nome/usuário/cor/avatar) pro cabeçalho do perfil
+  // público quando o id não é de uma conta real — ver comentário em
+  // GET /api/public/:id (server/index.mjs) e publicProfileHref (Community.tsx).
+  const sharedFallback = {
+    name: shareParams.get("nome") || "",
+    username: shareParams.get("usuario") || "",
+    color: shareParams.get("cor") || "",
+    avatar: shareParams.get("avatar") || "",
+  };
+  // Perfil de QUEM está sendo visitado no modo somente leitura — não confundir
+  // com "profile", o Account do próprio dono logado usado no resto do app.
+  const [viewedProfile, setViewedProfile] = useState<{
+    name: string;
+    username: string;
+    avatar: string;
+    followerCount: number;
+    memberSince: string | null;
+  } | null>(null);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [ownerId, setOwnerId] = useState("");
   const [loading, setLoading] = useState(true);
@@ -1823,7 +1837,7 @@ export default function App({
   const [url, setUrl] = useState("");
   const [theme, setTheme] = useState(() => {
     try {
-      return localStorage.getItem("pinicon-theme") || "dark";
+      return localStorage.getItem("likemylinks-theme") || "dark";
     } catch {
       return "dark";
     }
@@ -1860,13 +1874,15 @@ export default function App({
   const [isLiked, setIsLiked] = useState(false);
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [likedIds, setLikedIds] = useState<string[]>(() =>
-    JSON.parse(localStorage.getItem("pinicon-liked") || "[]"),
+    JSON.parse(localStorage.getItem("likemylinks-liked") || "[]"),
   );
-  const [bookmarkedIds, setBookmarkedIds] = useState<string[]>(() =>
-    JSON.parse(localStorage.getItem("pinicon-bookmarked") || "[]"),
-  );
+  // Diferente de likedIds (só local): favoritar um item persiste de verdade no
+  // servidor, dentro da coleção reservada "Itens Salvos" (ver
+  // toggleBookmarkBookmarked) — por isso começa vazio e é carregado de
+  // /api/saved-items, não do localStorage.
+  const [bookmarkedIds, setBookmarkedIds] = useState<string[]>([]);
   const [usage, setUsage] = useState<Record<string, number>>(() =>
-    JSON.parse(localStorage.getItem("pinicon-usage") || "{}"),
+    JSON.parse(localStorage.getItem("likemylinks-usage") || "{}"),
   );
   const [filterOpen, setFilterOpen] = useState(false);
   const [activeFilters, setActiveFilters] = useState<FilterKey[]>([]);
@@ -1885,6 +1901,12 @@ export default function App({
   // toggleCollectionBehavior (que faria PATCH /collections/temporary-filter,
   // um id que não existe de verdade), então tem seu próprio estado local.
   const [filterExpanded, setFilterExpanded] = useState(true);
+  // Três abas na home: "collections" é a página atual (inalterada); "community"
+  // e "discover" ainda não existem — mostram só um aviso de "em construção" até
+  // serem desenvolvidas.
+  const [homeTab, setHomeTab] = useState<
+    "collections" | "community" | "discover"
+  >("collections");
   // Controla se as barras de ferramentas (da coleção e dos favoritos) aparecem ao
   // passar o mouse. Desligado por padrão para não atrapalhar quem só quer navegar.
   const [toolbarsEnabled, setToolbarsEnabled] = useState(false);
@@ -1971,10 +1993,15 @@ export default function App({
   );
   const filteredCollection = activeFilters.length
     ? (() => {
+        // Um favorito não tem visibilidade própria (sempre herda da coleção —
+        // ver comentário no schema.prisma), então "isPublic" aqui é calculado
+        // na hora a partir da coleção dona de cada favorito, só pros filtros
+        // "Públicos"/"Privados" abaixo, que continuam fazendo sentido cruzando
+        // TODAS as coleções do dono (algumas públicas, outras não).
         const all = collections.flatMap((collection) => [
           ...collection.bookmarks,
           ...collection.groups.flatMap((group) => group.bookmarks),
-        ]);
+        ].map((bookmark) => ({ ...bookmark, isPublic: collection.isPublic })));
         let bookmarks = [...all];
         if (activeFilters.includes("liked"))
           bookmarks = bookmarks.filter((bookmark) =>
@@ -2022,7 +2049,7 @@ export default function App({
           description: activeFilters
             .map((filter) => filterLabels[filter])
             .join(" · "),
-          color: "#b9ee78",
+          color: "#8b5cf6",
           isPublic: false,
           behavior: filterExpanded ? "expansive" : "fixed",
           bookmarks,
@@ -2052,7 +2079,15 @@ export default function App({
       const data = await api(
         sharedId ? `/public/${encodeURIComponent(sharedId)}` : "/collections",
       );
-      setCollections(data.collections);
+      if (sharedId) {
+        setViewedProfile(data.profile || null);
+        // Autor fictício (sem Owner de verdade, ver GET /api/public/:id): mostra
+        // as mesmas coleções mockadas já exibidas no card dele no feed, em vez
+        // de uma página "sem coleções" pra quem só existe no communityMock.ts.
+        setCollections(data.profile ? data.collections : mockCollectionsByAuthor(sharedId));
+      } else {
+        setCollections(data.collections);
+      }
       setOwnerId(data.ownerId || "");
     } catch (e) {
       setConnectionError((e as Error).message);
@@ -2068,7 +2103,12 @@ export default function App({
       const data = await api(
         sharedId ? `/public/${encodeURIComponent(sharedId)}` : "/collections",
       );
-      setCollections(data.collections);
+      if (sharedId) {
+        setViewedProfile(data.profile || null);
+        setCollections(data.profile ? data.collections : mockCollectionsByAuthor(sharedId));
+      } else {
+        setCollections(data.collections);
+      }
       setOwnerId(data.ownerId || "");
     } catch {}
   }
@@ -2088,33 +2128,65 @@ export default function App({
   function registerUsage(id: string) {
     const next = { ...usage, [id]: (usage[id] || 0) + 1 };
     setUsage(next);
-    localStorage.setItem("pinicon-usage", JSON.stringify(next));
+    localStorage.setItem("likemylinks-usage", JSON.stringify(next));
   }
   function toggleBookmarkLiked(bookmark: Bookmark) {
-    toggleStoredId(bookmark.id, likedIds, setLikedIds, "pinicon-liked");
+    toggleStoredId(bookmark.id, likedIds, setLikedIds, "likemylinks-liked");
   }
-  function toggleBookmarkBookmarked(bookmark: Bookmark) {
-    toggleStoredId(
-      bookmark.id,
-      bookmarkedIds,
-      setBookmarkedIds,
-      "pinicon-bookmarked",
-    );
+  // Lista de ids já favoritados pelo VISITANTE logado (sempre o próprio dono
+  // da sessão, nunca de quem está sendo visitado) — carregada uma vez ao
+  // montar e de novo depois de cada favoritar/desfavoritar bem-sucedido.
+  // Falha silenciosa: num perfil compartilhado (?perfil=) o visitante pode
+  // nem estar logado (ver Auth.tsx), e aí o coração simplesmente não acende
+  // pra ele, sem quebrar o resto da página.
+  async function loadSavedItems() {
+    try {
+      const data = await api("/saved-items");
+      setBookmarkedIds(data.savedFromIds || []);
+    } catch {}
+  }
+  // Favoritar um item específico (o coração de cada favicon) cria ou remove
+  // uma CÓPIA dele dentro da coleção reservada "Itens Salvos" do próprio
+  // visitante — funciona tanto pros favoritos que ele mesmo criou quanto pros
+  // públicos de outro dono (perfil compartilhado, ?perfil=), já que o
+  // servidor recebe os dados do favorito direto do card que o usuário está
+  // vendo, sem precisar que ele seja dono do original (ver POST
+  // /api/saved-items/:sourceId). Devolve o novo estado (ativo/inativo) pra
+  // quem chamou poder refletir na hora, sem esperar um segundo round-trip.
+  async function toggleBookmarkBookmarked(
+    bookmark: Pick<Bookmark, "id" | "name" | "url" | "description" | "favicon" | "color">,
+  ): Promise<boolean | undefined> {
+    try {
+      const result = await api(
+        `/saved-items/${encodeURIComponent(bookmark.id)}`,
+        "POST",
+        {
+          name: bookmark.name,
+          url: bookmark.url,
+          description: bookmark.description,
+          favicon: bookmark.favicon,
+          color: bookmark.color,
+        },
+      );
+      setBookmarkedIds((current) =>
+        result.active
+          ? [...current, bookmark.id]
+          : current.filter((id) => id !== bookmark.id),
+      );
+      // Só recarrega "Suas coleções" quando é a própria — favoritar algo
+      // enquanto se visita o perfil de outra pessoa não deve reconsultar as
+      // coleções PÚBLICAS dela (readOnly), já que "Itens Salvos" vive na
+      // conta do visitante, não na de quem está sendo visitado.
+      if (!readOnly) void silentReload();
+      return result.active;
+    } catch (e) {
+      setNotice((e as Error).message);
+      return undefined;
+    }
   }
   function shareBookmark(bookmark: Bookmark) {
     void navigator.clipboard?.writeText(bookmark.url);
     setNotice("Link copiado.");
-  }
-  async function toggleBookmarkVisibility(bookmark: Bookmark) {
-    try {
-      await api(`/bookmarks/${bookmark.id}`, "PATCH", {
-        ...bookmark,
-        isPublic: !bookmark.isPublic,
-      });
-      await silentReload();
-    } catch (e) {
-      setNotice((e as Error).message);
-    }
   }
   async function toggleCollectionBehavior(collection: Collection) {
     try {
@@ -2199,7 +2271,7 @@ export default function App({
       const created = await api("/groups", "POST", {
         collectionId,
         name: "Novo grupo",
-        color: "#b9ee78",
+        color: "#8b5cf6",
         bookmarkIds,
       });
       await silentReload();
@@ -2217,7 +2289,7 @@ export default function App({
       const created = await api("/groups", "POST", {
         collectionId,
         name,
-        color: "#b9ee78",
+        color: "#8b5cf6",
         display: "section",
         bookmarkIds: [],
       });
@@ -2304,6 +2376,7 @@ export default function App({
   }
   useEffect(() => {
     void reload();
+    void loadSavedItems();
   }, []);
   useEffect(() => {
     function refreshIfVisible() {
@@ -2319,7 +2392,7 @@ export default function App({
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     try {
-      localStorage.setItem("pinicon-theme", theme);
+      localStorage.setItem("likemylinks-theme", theme);
     } catch {}
   }, [theme]);
   useEffect(() => {
@@ -2444,7 +2517,6 @@ export default function App({
     setDraft({
       ...blank,
       collectionId: collections[0]?.id || "",
-      ...(type === "bookmark" && !data?.id ? { isPublic: true } : {}),
       ...data,
     });
     setKind(type);
@@ -2886,12 +2958,20 @@ export default function App({
   function connectGoogle() {
     googleTokenClient.current?.requestAccessToken();
   }
+  // Servidor manda a palavra final quando o id é de uma conta real (owner
+  // não-nulo em GET /api/public/:id); o fallback da URL só entra em cena
+  // antes da resposta chegar, ou pro id fictício que nunca vai ter dono.
+  const publicProfileName = viewedProfile?.name || sharedFallback.name || "Usuário";
+  const publicProfileUsername = viewedProfile?.username || sharedFallback.username;
+  const publicProfileAvatar = viewedProfile?.avatar || sharedFallback.avatar;
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="/" aria-label="Pinicon, início">
-          <img src="/pinicon-icon-2.png" alt="" />
-          pinicon<span className="brand-period">.</span>
+        <a className="brand" href="/" aria-label="Like My Links, início">
+          <img src="/likemylinks-logo-1.png" alt="" />
+          <span className="brand-name">
+            Like <span className="brand-my">My</span> <span className="brand-links">Links</span>
+          </span>
         </a>
         {!readOnly && (
           <form className="search-bar header-add-bar" onSubmit={submitUrl}>
@@ -3256,37 +3336,88 @@ export default function App({
           </section>
         ) : (
           <>
+            {readOnly && (
+              <section className="public-profile-header">
+                <div className="public-profile-banner" />
+                <div className="public-profile-main">
+                  <span
+                    className="public-profile-avatar"
+                    style={{ "--orb": sharedFallback.color || "#9aa0a6" } as React.CSSProperties}
+                  >
+                    {publicProfileAvatar ? (
+                      <img src={publicProfileAvatar} alt="" />
+                    ) : (
+                      publicProfileName.slice(0, 1).toUpperCase()
+                    )}
+                  </span>
+                  <div className="public-profile-info">
+                    <h2>{publicProfileName}</h2>
+                    {publicProfileUsername && (
+                      <span className="public-profile-username">@{publicProfileUsername}</span>
+                    )}
+                    <span className="public-profile-meta">
+                      <CalendarDays size={14} />
+                      {viewedProfile?.memberSince
+                        ? `Entrou em ${new Date(viewedProfile.memberSince).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}`
+                        : "Conta de demonstração"}
+                    </span>
+                    <span className="public-profile-meta">
+                      <Users size={14} />
+                      <strong>{viewedProfile?.followerCount ?? 0}</strong>{" "}
+                      {viewedProfile?.followerCount === 1 ? "seguidor" : "seguidores"}
+                    </span>
+                  </div>
+                </div>
+              </section>
+            )}
             <div className="sticky-header">
+              {!readOnly && (
+                <div className="home-tabs" role="tablist" aria-label="Seções da página inicial">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={homeTab === "collections"}
+                    className={homeTab === "collections" ? "active" : undefined}
+                    onClick={() => setHomeTab("collections")}
+                  >
+                    Suas coleções
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={homeTab === "community"}
+                    className={homeTab === "community" ? "active" : undefined}
+                    onClick={() => setHomeTab("community")}
+                  >
+                    Comunidade
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={homeTab === "discover"}
+                    className={homeTab === "discover" ? "active" : undefined}
+                    onClick={() => setHomeTab("discover")}
+                  >
+                    Descobrir
+                  </button>
+                </div>
+              )}
+              {(readOnly || homeTab === "collections") && (
               <div className="library-heading">
-                <div>
-                  <h2>
-                    {readOnly ? "Coleções públicas" : "Suas coleções"}
-                    <span>{collections.length}</span>
-                  </h2>
+                <div className="library-summary">
+                  <span>
+                    {collections.length} {collections.length === 1 ? "Coleção" : "Coleções"}
+                  </span>
+                  <span className="library-summary-divider" aria-hidden="true" />
+                  <span>
+                    {total} {total === 1 ? "Favorito" : "Favoritos"}
+                  </span>
                 </div>
                 {!readOnly && (
                   <div
                     className="bulk-collections-toolbar"
                     aria-label="Ações em todas as coleções"
                   >
-                    <button
-                      type="button"
-                      className="collections-frame-toggle"
-                      aria-pressed={toolbarsEnabled}
-                      aria-label={
-                        toolbarsEnabled
-                          ? "Desativar barras de ferramentas"
-                          : "Ativar barras de ferramentas"
-                      }
-                      title={
-                        toolbarsEnabled
-                          ? "Desativar barras de ferramentas"
-                          : "Ativar barras de ferramentas"
-                      }
-                      onClick={() => setToolbarsEnabled((value) => !value)}
-                    >
-                      <Pencil size={13} />
-                    </button>
                     <button
                       type="button"
                       onClick={() => void toggleAllCollections()}
@@ -3306,6 +3437,18 @@ export default function App({
                       ) : (
                         <ChevronDown size={13} />
                       )}
+                    </button>
+                    <button
+                      type="button"
+                      aria-expanded={filterOpen}
+                      aria-label="Filtrar"
+                      title="Filtrar"
+                      onClick={() => {
+                        setSearchOpen(false);
+                        setFilterOpen((value) => !value);
+                      }}
+                    >
+                      <SlidersHorizontal size={13} />
                     </button>
                     <button
                       type="button"
@@ -3347,22 +3490,25 @@ export default function App({
                     </button>
                     <button
                       type="button"
-                      aria-expanded={filterOpen}
-                      aria-label="Filtrar"
-                      title="Filtrar"
-                      onClick={() => {
-                        setSearchOpen(false);
-                        setFilterOpen((value) => !value);
-                      }}
+                      className="collections-frame-toggle"
+                      aria-pressed={toolbarsEnabled}
+                      aria-label={
+                        toolbarsEnabled
+                          ? "Desativar barras de ferramentas"
+                          : "Ativar barras de ferramentas"
+                      }
+                      title={
+                        toolbarsEnabled
+                          ? "Desativar barras de ferramentas"
+                          : "Ativar barras de ferramentas"
+                      }
+                      onClick={() => setToolbarsEnabled((value) => !value)}
                     >
-                      <SlidersHorizontal size={13} />
+                      <Pencil size={13} />
                     </button>
                   </div>
                 )}
                 <div className="library-meta">
-                  <span>
-                    {total} {total === 1 ? "favorito" : "favoritos"}
-                  </span>
                   {!readOnly && ownerId && (
                     <>
                       <label
@@ -3388,7 +3534,23 @@ export default function App({
                   )}
                 </div>
               </div>
+              )}
             </div>
+            {homeTab === "community" && !readOnly ? (
+              <section className="library">
+                <CommunityFeed notify={setNotice} profile={profile} />
+              </section>
+            ) : homeTab === "discover" && !readOnly ? (
+              <section className="library">
+                <div className="collections-frame">
+                  <div className="empty-state under-construction">
+                    <Construction size={34} />
+                    <h3>Estamos trabalhando nisso!</h3>
+                    <p>O Descobrir ainda está a caminho — volte em breve.</p>
+                  </div>
+                </div>
+              </section>
+            ) : (
             <section className="library">
               <div className="collections-frame">
                 {loading ? (
@@ -3429,7 +3591,6 @@ export default function App({
                       toggleLiked={toggleBookmarkLiked}
                       toggleBookmarked={toggleBookmarkBookmarked}
                       shareBookmark={shareBookmark}
-                      toggleVisibility={toggleBookmarkVisibility}
                       toggleBehavior={(c) =>
                         c.id === "temporary-filter"
                           ? setFilterExpanded((value) => !value)
@@ -3504,12 +3665,13 @@ export default function App({
                 )}
               </div>
             </section>
+            )}
           </>
         )}
       </main>
       <footer>
-        <span>
-          pinicon<span className="brand-period">.</span>
+        <span className="brand-name">
+          Like <span className="brand-my">My</span> <span className="brand-links">Links</span>
         </span>
       </footer>
       {notice && !kind && (
@@ -3578,7 +3740,7 @@ export default function App({
                           draft.id,
                           likedIds,
                           setLikedIds,
-                          "pinicon-liked",
+                          "likemylinks-liked",
                         ),
                       );
                     }}
@@ -3593,14 +3755,26 @@ export default function App({
                     className={isBookmarked ? "active" : ""}
                     onClick={() => {
                       if (!draft.id) return;
-                      setIsBookmarked(
-                        toggleStoredId(
-                          draft.id,
-                          bookmarkedIds,
-                          setBookmarkedIds,
-                          "pinicon-bookmarked",
-                        ),
-                      );
+                      // "Favoritar" uma coleção continua só local (não existe
+                      // "Itens Salvos" de coleção, só de favorito individual —
+                      // ver toggleBookmarkBookmarked); só o caso de favorito
+                      // de verdade passa a persistir no servidor.
+                      if (kind === "bookmark") {
+                        void toggleBookmarkBookmarked(draft as Bookmark).then(
+                          (active) => {
+                            if (active !== undefined) setIsBookmarked(active);
+                          },
+                        );
+                      } else {
+                        setIsBookmarked(
+                          toggleStoredId(
+                            draft.id,
+                            bookmarkedIds,
+                            setBookmarkedIds,
+                            "likemylinks-bookmarked",
+                          ),
+                        );
+                      }
                     }}
                   >
                     <BookmarkIcon size={16} />
@@ -3618,23 +3792,25 @@ export default function App({
                   >
                     <Share2 size={16} />
                   </button>
-                  <button
-                    type="button"
-                    aria-label={
-                      draft.isPublic ? "Tornar privado" : "Tornar público"
-                    }
-                    title={draft.isPublic ? "Privar" : "Exibir"}
-                    className={!draft.isPublic ? "active" : ""}
-                    onClick={() =>
-                      setDraft({ ...draft, isPublic: !draft.isPublic })
-                    }
-                  >
-                    {draft.isPublic ? (
-                      <LockOpen size={16} />
-                    ) : (
-                      <Lock size={16} />
-                    )}
-                  </button>
+                  {kind === "collection" && (
+                    <button
+                      type="button"
+                      aria-label={
+                        draft.isPublic ? "Tornar privado" : "Tornar público"
+                      }
+                      title={draft.isPublic ? "Privar" : "Exibir"}
+                      className={!draft.isPublic ? "active" : ""}
+                      onClick={() =>
+                        setDraft({ ...draft, isPublic: !draft.isPublic })
+                      }
+                    >
+                      {draft.isPublic ? (
+                        <LockOpen size={16} />
+                      ) : (
+                        <Lock size={16} />
+                      )}
+                    </button>
+                  )}
                   {(kind === "bookmark" || kind === "collection") && (
                     <button
                       type="button"
@@ -3669,13 +3845,6 @@ export default function App({
                       <Trash2 size={16} />
                     </button>
                   )}
-                </div>
-              ) : kind === "bookmark" ? (
-                <div className="bookmark-privacy-header">
-                  <Privacy
-                    value={draft.isPublic}
-                    onChange={(isPublic) => setDraft({ ...draft, isPublic })}
-                  />
                 </div>
               ) : null}
               <button
@@ -4052,7 +4221,7 @@ export default function App({
                 </label>
                 <div className="color-picker">
                   {[
-                    "#b9ee78",
+                    "#8b5cf6",
                     "#7cc9ec",
                     "#ae9cf4",
                     "#eea4c3",
@@ -4203,7 +4372,7 @@ export default function App({
               <label>Estilo de cor</label>
               <div className="color-picker">
                 {[
-                  "#b9ee78",
+                  "#8b5cf6",
                   "#7cc9ec",
                   "#ae9cf4",
                   "#eea4c3",

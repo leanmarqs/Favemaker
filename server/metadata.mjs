@@ -50,7 +50,7 @@ export function isPublicAddress(address) {
     parsed = parsed.toIPv4Address();
   return parsed.range() === "unicast";
 }
-const DEFAULT_UA = "Pinicon/1.0";
+const DEFAULT_UA = "LikeMyLinks/1.0";
 // Vários sites (TikTok, Instagram, ...) servem a página praticamente vazia pra
 // um fetch de servidor genérico — o conteúdo real só existe depois de JS rodar
 // no navegador — mas reconhecem esse User-Agent de crawler de preview social
@@ -198,7 +198,7 @@ export async function imageData(buffer, { crop = "inside" } = {}) {
     buffer = Buffer.from(images[0].buffer);
   }
   // "cover" é usado pra imagem de conteúdo (og:image de um post específico): ela
-  // quase nunca é quadrada, e o Pinicon mostra o favorito num círculo — em vez de
+  // quase nunca é quadrada, e o Like My Links mostra o favorito num círculo — em vez de
   // encolher mantendo a proporção (sobraria fundo/letterbox), recorta um quadrado
   // central com a estratégia "attention" do sharp, que tenta manter a região mais
   // relevante da imagem (bordas costumam ter só texto/gradiente decorativo).

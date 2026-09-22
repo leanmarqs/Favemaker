@@ -11,14 +11,19 @@ test(
     const server = app.listen(0, "127.0.0.1");
     await new Promise((resolve) => server.once("listening", resolve));
     const base = `http://127.0.0.1:${server.address().port}/api`;
+    const origin = `http://127.0.0.1:${server.address().port}`;
     const db = new PrismaClient();
     const owners = [];
+    // Same-origin, como um navegador de verdade sempre manda em POST/PATCH/
+    // DELETE (ao contrário do fetch do Node, que nunca inclui esse header
+    // sozinho) — sem isso, hasAllowedOrigin em index.mjs rejeitaria toda
+    // requisição de escrita destes testes por Origin ausente.
     function client(initialCookie = "") {
       let cookie = initialCookie;
       return async (path, method = "GET", body) => {
         const response = await fetch(base + path, {
           method,
-          headers: { "Content-Type": "application/json", cookie },
+          headers: { "Content-Type": "application/json", cookie, Origin: origin },
           body: body ? JSON.stringify(body) : undefined,
         });
         cookie = response.headers.get("set-cookie")?.split(";")[0] || cookie;
@@ -33,7 +38,7 @@ test(
     const fields = {
       name: "Coleção teste",
       description: "",
-      color: "#b9ee78",
+      color: "#8b5cf6",
       isPublic: true,
     };
     try {
@@ -64,9 +69,13 @@ test(
         404,
       );
       const publicBookmark = (await a("/bookmarks", "POST", bookmark)).data;
+      // Um favorito não tem visibilidade própria — sempre herda da coleção
+      // (ver comentário no schema.prisma). Mandar isPublic: false aqui não
+      // deve esconder este favorito: ele aparece igual, porque a coleção `c`
+      // continua pública.
       await a("/bookmarks", "POST", {
         ...bookmark,
-        name: "Privado",
+        name: "Também herda a visibilidade da coleção",
         isPublic: false,
       });
       assert.equal(
@@ -79,8 +88,10 @@ test(
       );
       assert.equal(
         (await b(`/public/${owner}`)).data.collections[0].bookmarks.length,
-        1,
+        2,
       );
+      // Coleção privada: TODOS os favoritos somem da visão pública de uma vez
+      // (nenhum tinha visibilidade própria pra continuar aparecendo sozinho).
       await a(`/collections/${c.id}`, "PATCH", { ...fields, isPublic: false });
       assert.equal((await b(`/public/${owner}`)).data.collections.length, 0);
       assert.equal(
@@ -103,18 +114,18 @@ test(
       );
       assert.equal((await a("/auth/logout", "POST", {})).status, 204);
       assert.equal((await a("/collections")).status, 401);
-      assert.equal((await a("/auth/login", "POST", { username, password: "wrong" })).status, 401);
-      assert.equal((await a("/auth/login", "POST", { username, password })).status, 200);
+      assert.equal((await a("/auth/login", "POST", { identifier: username, password: "wrong" })).status, 401);
+      assert.equal((await a("/auth/login", "POST", { identifier: username, password })).status, 200);
       assert.equal((await a("/collections")).data.ownerId, owner);
       assert.equal((await a("/auth/me")).data.user.name, username);
       const legacyToken = randomBytes(32).toString("hex");
       const legacy = await db.owner.create({ data: { tokenHash: createHash("sha256").update(legacyToken).digest("hex") } });
       owners.push(legacy.id);
       const legacyCollection = await db.collection.create({ data: { ...fields, ownerId: legacy.id } });
-      const migrated = client(`pinicon_session=${legacyToken}`);
+      const migrated = client(`likemylinks_session=${legacyToken}`);
       assert.equal((await migrated("/auth/register", "POST", { username: `${username}_legacy`, password, email: `${username}_legacy@example.com` })).status, 200);
       assert.equal((await migrated("/collections")).data.collections[0].id, legacyCollection.id);
-      assert.equal((await client(`pinicon_session=${legacyToken}`)("/collections")).status, 401);
+      assert.equal((await client(`likemylinks_session=${legacyToken}`)("/collections")).status, 401);
       await db.session.updateMany({ where: { ownerId: owner }, data: { expiresAt: new Date(0) } });
       assert.equal((await a("/collections")).status, 401);
       const csrf = await fetch(base + "/auth/login", { method: "POST", headers: { "Content-Type": "application/json", Origin: "https://untrusted.example" }, body: JSON.stringify({ username, password }) });
