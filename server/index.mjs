@@ -1,7 +1,8 @@
 import "dotenv/config";
 import express from "express";
 import helmet from "helmet";
-import { PrismaClient } from "@prisma/client";
+import pkg from "@prisma/client";
+const { PrismaClient } = pkg;
 import { installAuth } from "./auth.mjs";
 import { installCommunity } from "./community.mjs";
 import { fileURLToPath } from "node:url";
@@ -32,7 +33,7 @@ const developmentOrigins = new Set([
   "http://127.0.0.1:3000",
 ]);
 
-// Origens de extensões de navegador (ex: a extensão "Salvar no Like My Links"). Uma página
+// Origens de extensões de navegador (ex: a extensão "Salvar no Linkable"). Uma página
 // maliciosa nunca tem essa origem — só uma extensão instalada pelo próprio usuário.
 function isExtensionOrigin(origin) {
   return /^(chrome|moz)-extension:\/\//.test(origin || "");
@@ -90,13 +91,13 @@ app.use(
 // biblioteca grande — /api/import recebe esse HTML inteiro como corpo JSON.
 app.use(express.json({ limit: "20mb" }));
 // CORS para extensões de navegador: elas rodam numa origem própria (chrome-extension://…)
-// e autenticam com o header X-LikeMyLinks-Session (ver cookieToken em auth.mjs) em vez do
+// e autenticam com o header X-Linkable-Session (ver cookieToken em auth.mjs) em vez do
 // cookie de sessão, então precisam de uma resposta CORS explícita para ler o resultado.
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (isExtensionOrigin(origin)) {
     res.set("Access-Control-Allow-Origin", origin);
-    res.set("Access-Control-Allow-Headers", "Content-Type, X-LikeMyLinks-Session");
+    res.set("Access-Control-Allow-Headers", "Content-Type, X-Linkable-Session");
     res.set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
     if (req.method === "OPTIONS") return res.sendStatus(204);
   }
@@ -712,7 +713,7 @@ app.post(["/api/metadata", "/api/icon"], async (req, res) => {
     res.status(400).json({ error: e.message });
   }
 });
-// Achata pastas aninhadas além de um nível: o Like My Links só tem coleção → grupo →
+// Achata pastas aninhadas além de um nível: o Linkable só tem coleção → grupo →
 // favorito, então uma pasta dentro de um grupo perde só o próprio nome —
 // nenhum favorito é descartado.
 function flattenBookmarks(nodes) {
@@ -873,7 +874,7 @@ app.get("/api/export", async (req, res) => {
   });
   const html = buildBookmarksHtml(collections);
   res.set("Content-Type", "text/html; charset=utf-8");
-  res.set("Content-Disposition", 'attachment; filename="likemylinks-favoritos.html"');
+  res.set("Content-Disposition", 'attachment; filename="linkable-favoritos.html"');
   res.send(html);
 });
 const cleanup = setInterval(() => {
@@ -911,7 +912,7 @@ if (
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   app.listen(Number(process.env.PORT || 3001), () =>
-    console.log("Like My Links disponível na porta " + (process.env.PORT || 3001)),
+    console.log("Linkable disponível na porta " + (process.env.PORT || 3001)),
   );
   // Só no servidor de verdade — importar este arquivo pra teste (ver
   // tests/api.test.mjs) não deve disparar checagens de link de fundo.

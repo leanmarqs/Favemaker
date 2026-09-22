@@ -1,21 +1,21 @@
-# Like My Links — Salvar (extensão, Marco 1)
+# Linkable — Salvar (extensão, Marco 1)
 
 Extensão de navegador (Manifest V3) que salva a página/post atual como favorito
-no Like My Links, com miniatura (via `og:image`) e descrição, direto do navegador —
+no Linkable, com miniatura (via `og:image`) e descrição, direto do navegador —
 sem precisar copiar link e colar no app.
 
 ## Como carregar (modo desenvolvedor)
 
-1. Rode o Like My Links normalmente (`npm run dev`, acessível em `http://localhost:3000`)
+1. Rode o Linkable normalmente (`npm run dev`, acessível em `http://localhost:3000`)
    e faça login no navegador que você vai usar para testar a extensão.
 2. Abra `chrome://extensions` (ou `edge://extensions`), ative o **Modo do desenvolvedor**.
 3. Clique em **Carregar sem compactação** e selecione esta pasta (`extension/`).
-4. O ícone do Like My Links aparece na barra de extensões.
+4. O ícone do Linkable aparece na barra de extensões.
 
 ## Como usar
 
 - **Clique no ícone da extensão** → mostra um preview (ícone, nome, descrição)
-  da página atual, editável, com a coleção e a seção → **Salvar no Like My Links**.
+  da página atual, editável, com a coleção e a seção → **Salvar no Linkable**.
   Nome e descrição vêm do mesmo `POST /api/metadata` usado pela barra de busca
   do site e pelo menu de contexto (ver abaixo) — inclusive já prioriza a
   imagem do conteúdo específico (`og:image`) sobre o favicon do site quando a
@@ -31,9 +31,9 @@ sem precisar copiar link e colar no app.
     coleção ainda aberto, sem ter confirmado nada), a seção não é criada e o
     popup avisa em vez de falhar silenciosamente.
 - **Botão direito em cima de um link (não em qualquer espaço da página)** →
-  **Salvar no Like My Links** → salva direto na coleção (e na seção, se alguma
+  **Salvar no Linkable** → salva direto na coleção (e na seção, se alguma
   estiver escolhida) configuradas no popup, sem abrir aba nem modal — só uma
-  notificação do sistema confirmando "Salvo no Like My Links" (ou o erro, se algo
+  notificação do sistema confirmando "Salvo no Linkable" (ou o erro, se algo
   falhar). A URL salva é a do link clicado, não a da página onde está o link.
   Antes de usar a seção lembrada, a extensão confirma que ela ainda existe e
   ainda pertence à coleção padrão atual — se a seção foi excluída ou a
@@ -41,7 +41,7 @@ sem precisar copiar link e colar no app.
   falhar com um erro de "seção não encontrada".
 
 Se a extensão não encontrar sessão logada, o popup mostra um botão para abrir
-o Like My Links; pelo menu de contexto, se a sessão não estiver logada ou nenhuma
+o Linkable; pelo menu de contexto, se a sessão não estiver logada ou nenhuma
 coleção padrão tiver sido escolhida ainda, a notificação avisa em vez de
 salvar silenciosamente errado.
 
@@ -86,9 +86,9 @@ salvar silenciosamente errado.
   `POST /api/bookmarks`, passando o `groupId` da seção escolhida — o próprio
   servidor baixa e converte a imagem (`resolveImage`), igual já faz para o
   avatar.
-- Autenticação: como `likemylinks_session` é um cookie `HttpOnly`, a extensão lê seu
+- Autenticação: como `linkable_session` é um cookie `HttpOnly`, a extensão lê seu
   valor via `chrome.cookies.get` (permitido para extensões com
-  `host_permissions` na origem) e o envia no header `X-LikeMyLinks-Session` — por
+  `host_permissions` na origem) e o envia no header `X-Linkable-Session` — por
   isso o backend ganhou um pequeno ajuste (`server/auth.mjs` aceita esse header
   como alternativa ao cookie; `server/index.mjs` responde CORS para origens
   `chrome-extension://…`).

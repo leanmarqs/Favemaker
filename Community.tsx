@@ -422,7 +422,7 @@ export default function CommunityFeed({
   }
 
   function sharePost(postId: string) {
-    void navigator.clipboard?.writeText(`https://likemylinks.app/c/${postId}`);
+    void navigator.clipboard?.writeText(`https://linkable.app/c/${postId}`);
     notify("Link copiado.");
   }
 
@@ -460,7 +460,7 @@ export default function CommunityFeed({
   }
 
   function shareComment(postId: string, commentId: string) {
-    void navigator.clipboard?.writeText(`https://likemylinks.app/c/${postId}#${commentId}`);
+    void navigator.clipboard?.writeText(`https://linkable.app/c/${postId}#${commentId}`);
     notify("Link copiado.");
   }
 
@@ -976,7 +976,7 @@ export default function CommunityFeed({
             </div>
             <ul className="about-account-facts">
               <li>
-                <span>Publicações no Like My Links</span>
+                <span>Publicações no Linkable</span>
                 <strong>{aboutInfo?.postCount ?? 0}</strong>
               </li>
               <li>

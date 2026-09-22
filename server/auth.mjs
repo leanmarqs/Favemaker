@@ -8,14 +8,14 @@ import { resolveImage } from "./metadata.mjs";
 const scrypt = promisify(derive);
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const cookieOptions = { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/" };
-// Extensões de navegador (ex: "Salvar no Like My Links") não recebem o cookie HttpOnly
+// Extensões de navegador (ex: "Salvar no Linkable") não recebem o cookie HttpOnly
 // automaticamente entre origens, então leem o valor via chrome.cookies e o enviam
 // explicitamente neste header — o mesmo token, só um transporte diferente.
 const HEADER_TOKEN = /^[a-f0-9]{64}$/;
 const cookieToken = (req) => {
-  const header = req.headers["x-likemylinks-session"];
+  const header = req.headers["x-linkable-session"];
   if (typeof header === "string" && HEADER_TOKEN.test(header)) return header;
-  return req.headers.cookie?.match(/(?:^|;\s*)likemylinks_session=([a-f0-9]{64})(?:;|$)/)?.[1];
+  return req.headers.cookie?.match(/(?:^|;\s*)linkable_session=([a-f0-9]{64})(?:;|$)/)?.[1];
 };
 const MIN_PASSWORD = 8;
 const SESSION_DURATION = 30 * 86400000;
@@ -143,7 +143,7 @@ export function installAuth(app, prisma) {
       if (oldToken) await tx.session.deleteMany({ where: { tokenHash: hash(oldToken) } });
       await tx.session.create({ data: { tokenHash: hash(token), ownerId: owner.id, expiresAt: new Date(Date.now() + SESSION_DURATION) } });
     });
-    res.cookie("likemylinks_session", token, { ...cookieOptions, maxAge: SESSION_DURATION });
+    res.cookie("linkable_session", token, { ...cookieOptions, maxAge: SESSION_DURATION });
     res.json({ user: publicUser(owner) });
   }
   async function createOwner(req, data) {
@@ -339,7 +339,7 @@ export function installAuth(app, prisma) {
     const owner = await prisma.owner.findUnique({ where: { googleId: payload.sub } });
     if (!owner) {
       return res.status(404).json({
-        error: "Nenhuma conta do Like My Links foi encontrada.",
+        error: "Nenhuma conta do Linkable foi encontrada.",
         code: "GOOGLE_ACCOUNT_NOT_LINKED",
       });
     }
@@ -368,7 +368,7 @@ export function installAuth(app, prisma) {
       await logAuthEvent(req, owner.id, "GOOGLE_LINKED");
       res.json({ user: publicUser(owner) });
     } catch (error) {
-      if (error.code === "P2002") return res.status(409).json({ error: "Esta conta Google já está conectada a outro usuário do Like My Links." });
+      if (error.code === "P2002") return res.status(409).json({ error: "Esta conta Google já está conectada a outro usuário do Linkable." });
       throw error;
     }
   });
@@ -388,7 +388,7 @@ export function installAuth(app, prisma) {
     const token = cookieToken(req);
     if (req.owner) await logAuthEvent(req, req.owner.id, "LOGOUT");
     if (token) await prisma.session.deleteMany({ where: { tokenHash: hash(token) } });
-    res.clearCookie("likemylinks_session", cookieOptions);
+    res.clearCookie("linkable_session", cookieOptions);
     res.sendStatus(204);
   });
   app.patch("/api/auth/me", async (req, res) => {
@@ -442,7 +442,7 @@ export function installAuth(app, prisma) {
       if (!valid) return res.status(401).json({ error: "Senha incorreta." });
     }
     await prisma.owner.delete({ where: { id: req.owner.id } });
-    res.clearCookie("likemylinks_session", cookieOptions);
+    res.clearCookie("linkable_session", cookieOptions);
     res.sendStatus(204);
   });
   app.use("/api", (req, res, next) => {

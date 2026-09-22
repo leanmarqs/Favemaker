@@ -6,12 +6,12 @@ import {
   createBookmark,
 } from "./shared.js";
 
-const MENU_ID = "likemylinks-save-page";
+const MENU_ID = "linkable-save-page";
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: MENU_ID,
-    title: "Salvar no Like My Links",
+    title: "Salvar no Linkable",
     contexts: ["link"],
   });
 });
@@ -33,13 +33,13 @@ function notify(title, message) {
 async function handleSave(linkUrl) {
   const { baseUrl, lastCollectionId, lastGroupId } = await getSettings();
   if (!lastCollectionId) {
-    notify("Like My Links", "Abra a extensão e escolha uma coleção padrão antes de salvar.");
+    notify("Linkable", "Abra a extensão e escolha uma coleção padrão antes de salvar.");
     return;
   }
   try {
     const me = await fetchMe(baseUrl);
     if (!me.user) {
-      notify("Like My Links", "Faça login no Like My Links no navegador antes de salvar.");
+      notify("Linkable", "Faça login no Linkable no navegador antes de salvar.");
       return;
     }
     // Confirma que a seção lembrada ainda existe e ainda é dessa mesma
@@ -65,7 +65,7 @@ async function handleSave(linkUrl) {
       collectionId: lastCollectionId,
       groupId,
     });
-    notify("Salvo no Like My Links", data.name || linkUrl);
+    notify("Salvo no Linkable", data.name || linkUrl);
   } catch (error) {
     notify("Não foi possível salvar", error.message || "Erro inesperado.");
   }

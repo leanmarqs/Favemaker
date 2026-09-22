@@ -1,4 +1,4 @@
-# Like My Links
+# Linkable
 
 Um bookmark online em português do Brasil. Organize sites em coleções, personalize seus ícones e compartilhe apenas o conteúdo que escolher.
 
@@ -14,7 +14,7 @@ Requisitos: Node.js 22.12+ e PostgreSQL. No PowerShell, use `npm.cmd` se a polí
 npm install
 ```
 
-Copie `.env.example` para `.env` e ajuste `DATABASE_URL` com usuário, senha, host e banco **likemylinks**. Para criar uma instância local com Docker:
+Copie `.env.example` para `.env` e ajuste `DATABASE_URL` com usuário, senha, host e banco **linkable**. Para criar uma instância local com Docker:
 
 ```sh
 docker compose up -d

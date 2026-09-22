@@ -3,7 +3,7 @@ import { load } from "cheerio";
 // Formato "Netscape Bookmark File" — o HTML padronizado que Chrome, Firefox,
 // Edge, Safari e a maioria dos navegadores geram na própria função "Exportar
 // favoritos". Genérico de propósito (sem nenhuma regra específica do
-// Like My Links, como limite de profundidade): quem decide o que fazer com pastas
+// Linkable, como limite de profundidade): quem decide o que fazer com pastas
 // aninhadas é a rota /api/import em index.mjs, não este módulo.
 //
 // Estrutura real (confirmada testando com cheerio): um <DT> com <A> filho é
@@ -60,8 +60,8 @@ function renderBookmark(bookmark) {
 }
 
 // Grupos viram uma subpasta dentro da pasta da coleção — só um nível, já que
-// o Like My Links também só suporta um nível de agrupamento — o que faz o roundtrip
-// (exportar e reimportar, no Like My Links ou em qualquer navegador) preservar a
+// o Linkable também só suporta um nível de agrupamento — o que faz o roundtrip
+// (exportar e reimportar, no Linkable ou em qualquer navegador) preservar a
 // estrutura sem perdas.
 function renderFolder(name, bookmarks, groups) {
   const items = [

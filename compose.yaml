@@ -2,16 +2,16 @@ services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_USER: likemylinks
-      POSTGRES_PASSWORD: likemylinks
-      POSTGRES_DB: likemylinks
+      POSTGRES_USER: linkable
+      POSTGRES_PASSWORD: linkable
+      POSTGRES_DB: linkable
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
-      - likemylinks_data:/var/lib/postgresql/data
+      - linkable_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U likemylinks"]
+      test: ["CMD-SHELL", "pg_isready -U linkable"]
       interval: 5s
       retries: 10
 volumes:
-  likemylinks_data:
+  linkable_data:

@@ -28,7 +28,7 @@ const DELAY_BETWEEN_CHECKS_MS = 400;
 const REACHABLE_BUT_GATED_STATUSES = new Set([401, 403, 429]);
 export async function checkLink(url) {
   try {
-    await safeFetch(url, 0, "LikeMyLinks-LinkChecker/1.0", true);
+    await safeFetch(url, 0, "Linkable-LinkChecker/1.0", true);
     return "ok";
   } catch (error) {
     if (REACHABLE_BUT_GATED_STATUSES.has(error.status) || error.tooManyRedirects)

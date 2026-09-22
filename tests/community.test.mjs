@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { PrismaClient } from "@prisma/client";
+import pkg from "@prisma/client";
+const { PrismaClient } = pkg;
 test(
   "curtir/salvar/comentar na Comunidade persiste por dono e usa o perfil real do autor",
   { skip: !process.env.TEST_DATABASE_URL },

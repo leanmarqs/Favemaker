@@ -67,7 +67,7 @@ export async function api(path: string, method = "GET", body?: unknown) {
   if (res.status === 204) return null;
   const data = await res
     .json()
-    .catch(() => ({ error: "Não foi possível conectar ao Like My Links." }));
+    .catch(() => ({ error: "Não foi possível conectar ao Linkable." }));
   if (!res.ok)
     throw new Error(data.error || "Não foi possível concluir a operação.");
   return data;
@@ -1837,7 +1837,7 @@ export default function App({
   const [url, setUrl] = useState("");
   const [theme, setTheme] = useState(() => {
     try {
-      return localStorage.getItem("likemylinks-theme") || "dark";
+      return localStorage.getItem("linkable-theme") || "dark";
     } catch {
       return "dark";
     }
@@ -1874,7 +1874,7 @@ export default function App({
   const [isLiked, setIsLiked] = useState(false);
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [likedIds, setLikedIds] = useState<string[]>(() =>
-    JSON.parse(localStorage.getItem("likemylinks-liked") || "[]"),
+    JSON.parse(localStorage.getItem("linkable-liked") || "[]"),
   );
   // Diferente de likedIds (só local): favoritar um item persiste de verdade no
   // servidor, dentro da coleção reservada "Itens Salvos" (ver
@@ -1882,7 +1882,7 @@ export default function App({
   // /api/saved-items, não do localStorage.
   const [bookmarkedIds, setBookmarkedIds] = useState<string[]>([]);
   const [usage, setUsage] = useState<Record<string, number>>(() =>
-    JSON.parse(localStorage.getItem("likemylinks-usage") || "{}"),
+    JSON.parse(localStorage.getItem("linkable-usage") || "{}"),
   );
   const [filterOpen, setFilterOpen] = useState(false);
   const [activeFilters, setActiveFilters] = useState<FilterKey[]>([]);
@@ -2128,10 +2128,10 @@ export default function App({
   function registerUsage(id: string) {
     const next = { ...usage, [id]: (usage[id] || 0) + 1 };
     setUsage(next);
-    localStorage.setItem("likemylinks-usage", JSON.stringify(next));
+    localStorage.setItem("linkable-usage", JSON.stringify(next));
   }
   function toggleBookmarkLiked(bookmark: Bookmark) {
-    toggleStoredId(bookmark.id, likedIds, setLikedIds, "likemylinks-liked");
+    toggleStoredId(bookmark.id, likedIds, setLikedIds, "linkable-liked");
   }
   // Lista de ids já favoritados pelo VISITANTE logado (sempre o próprio dono
   // da sessão, nunca de quem está sendo visitado) — carregada uma vez ao
@@ -2392,7 +2392,7 @@ export default function App({
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     try {
-      localStorage.setItem("likemylinks-theme", theme);
+      localStorage.setItem("linkable-theme", theme);
     } catch {}
   }, [theme]);
   useEffect(() => {
@@ -2967,11 +2967,11 @@ export default function App({
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="/" aria-label="Like My Links, início">
-          <img src="/likemylinks-logo-1.png" alt="" />
-          <span className="brand-name">
-            Like <span className="brand-my">My</span> <span className="brand-links">Links</span>
-          </span>
+        <a className="brand" href="/" aria-label="Linkable, início">
+          <img
+            src={theme === "dark" ? "/linkable-logotype-2.png" : "/linkable-logotype-1.png"}
+            alt="Linkable"
+          />
         </a>
         {!readOnly && (
           <form className="search-bar header-add-bar" onSubmit={submitUrl}>
@@ -3670,9 +3670,11 @@ export default function App({
         )}
       </main>
       <footer>
-        <span className="brand-name">
-          Like <span className="brand-my">My</span> <span className="brand-links">Links</span>
-        </span>
+        <img
+          className="footer-logotype"
+          src={theme === "dark" ? "/linkable-logotype-2.png" : "/linkable-logotype-1.png"}
+          alt="Linkable"
+        />
       </footer>
       {notice && !kind && (
         <div className="toast" role="status">
@@ -3740,7 +3742,7 @@ export default function App({
                           draft.id,
                           likedIds,
                           setLikedIds,
-                          "likemylinks-liked",
+                          "linkable-liked",
                         ),
                       );
                     }}
@@ -3771,7 +3773,7 @@ export default function App({
                             draft.id,
                             bookmarkedIds,
                             setBookmarkedIds,
-                            "likemylinks-bookmarked",
+                            "linkable-bookmarked",
                           ),
                         );
                       }

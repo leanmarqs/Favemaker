@@ -305,7 +305,7 @@ async function init() {
         collectionId: els.collectionSelect.value,
         groupId: els.sectionSelect.value || null,
       });
-      setFeedback("Salvo no Like My Links!", "success");
+      setFeedback("Salvo no Linkable!", "success");
     } catch (error) {
       setFeedback(error.message, "error");
     } finally {

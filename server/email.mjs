@@ -23,18 +23,18 @@ async function send(payload) {
 
 export async function sendPasswordResetEmail(to, resetUrl) {
   await send({
-    from: process.env.EMAIL_FROM || "Like My Links <onboarding@resend.dev>",
+    from: process.env.EMAIL_FROM || "Linkable <onboarding@resend.dev>",
     to,
-    subject: "Redefinir sua senha do Like My Links",
+    subject: "Redefinir sua senha do Linkable",
     html: `<p>Recebemos um pedido para redefinir sua senha.</p><p><a href="${resetUrl}">Clique aqui para criar uma nova senha</a>. O link expira em 1 hora.</p><p>Se você não pediu isso, ignore este e-mail.</p>`,
   });
 }
 
 export async function sendVerificationEmail(to, verifyUrl) {
   await send({
-    from: process.env.EMAIL_FROM || "Like My Links <onboarding@resend.dev>",
+    from: process.env.EMAIL_FROM || "Linkable <onboarding@resend.dev>",
     to,
-    subject: "Confirme seu e-mail no Like My Links",
-    html: `<p>Falta pouco para ativar sua conta.</p><p><a href="${verifyUrl}">Clique aqui para confirmar seu e-mail</a>. O link expira em 24 horas.</p><p>Se você não criou uma conta no Like My Links, ignore este e-mail.</p>`,
+    subject: "Confirme seu e-mail no Linkable",
+    html: `<p>Falta pouco para ativar sua conta.</p><p><a href="${verifyUrl}">Clique aqui para confirmar seu e-mail</a>. O link expira em 24 horas.</p><p>Se você não criou uma conta no Linkable, ignore este e-mail.</p>`,
   });
 }

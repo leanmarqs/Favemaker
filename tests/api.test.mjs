@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { PrismaClient } from "@prisma/client";
+import pkg from "@prisma/client";
+const { PrismaClient } = pkg;
 import { randomBytes, createHash } from "node:crypto";
 test(
   "CRUD, coleção obrigatória, isolamento e privacidade hierárquica",
@@ -122,10 +123,10 @@ test(
       const legacy = await db.owner.create({ data: { tokenHash: createHash("sha256").update(legacyToken).digest("hex") } });
       owners.push(legacy.id);
       const legacyCollection = await db.collection.create({ data: { ...fields, ownerId: legacy.id } });
-      const migrated = client(`likemylinks_session=${legacyToken}`);
+      const migrated = client(`linkable_session=${legacyToken}`);
       assert.equal((await migrated("/auth/register", "POST", { username: `${username}_legacy`, password, email: `${username}_legacy@example.com` })).status, 200);
       assert.equal((await migrated("/collections")).data.collections[0].id, legacyCollection.id);
-      assert.equal((await client(`likemylinks_session=${legacyToken}`)("/collections")).status, 401);
+      assert.equal((await client(`linkable_session=${legacyToken}`)("/collections")).status, 401);
       await db.session.updateMany({ where: { ownerId: owner }, data: { expiresAt: new Date(0) } });
       assert.equal((await a("/collections")).status, 401);
       const csrf = await fetch(base + "/auth/login", { method: "POST", headers: { "Content-Type": "application/json", Origin: "https://untrusted.example" }, body: JSON.stringify({ username, password }) });
