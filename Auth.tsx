@@ -167,8 +167,13 @@ export default function Auth() {
       active = false;
     };
   }, [verifyToken]);
+  // Roda mesmo com "shared" (perfil público, ?perfil=): GET /api/auth/me
+  // sempre responde 200 {user:null} pra quem não está logado (nunca lança),
+  // então isso é seguro pra visitante anônimo também — e é o que permite ao
+  // App mostrar o header completo (busca + menu de avatar) quando quem abre
+  // um link de perfil já está com sessão ativa (ver o render de "shared" logo
+  // abaixo).
   useEffect(() => {
-    if (shared) return;
     authRequest("me")
       .then((data) => {
         setUser(data.user);
@@ -180,7 +185,7 @@ export default function Auth() {
         ),
       )
       .finally(() => setLoading(false));
-  }, [shared]);
+  }, []);
   useEffect(() => {
     if (!clientId || user || loading) return;
     let active = true;
@@ -317,7 +322,16 @@ export default function Auth() {
       window.alert("Não foi possível sair. Tente novamente.");
     }
   }
-  if (shared) return <App />;
+  // key força remontar o App no instante em que o fetch de "me" acima
+  // resolver pra um usuário logado — o estado interno "profile" do App só lê
+  // o prop "account" uma vez, no mount (useState(account)), então sem essa
+  // troca de key o header ficaria "sem conta" mesmo depois da sessão
+  // carregar. Pra visitante anônimo de verdade, "user" continua null e não
+  // há remount nenhum.
+  if (shared)
+    return (
+      <App key={user?.id ?? "anon"} account={user ?? undefined} onLogout={logout} googleClientId={clientId} />
+    );
   if (loading)
     return (
       <main className="auth-page" aria-busy="true">

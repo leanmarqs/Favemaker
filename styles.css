@@ -14,11 +14,6 @@
   justify-content: center;
   padding: 32px;
   overflow-y: auto;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-.auth-panel::-webkit-scrollbar {
-  display: none;
 }
 .auth-panel-inner {
   width: 100%;
@@ -190,12 +185,12 @@
     "Segoe UI",
     sans-serif;
   color-scheme: dark;
-  --bg: #0f172a;
-  --surface: #161f38;
-  --raised: #202a4a;
-  --text: #f3f4ff;
-  --muted: #8b93b5;
-  --border: #263256;
+  --bg: #0a0a0a;
+  --surface: #161616;
+  --raised: #212121;
+  --text: #f5f5f5;
+  --muted: #9a9a9a;
+  --border: #2a2a2a;
   --accent: #8b5cf6;
   --accent-ink: #ffffff;
   --accent-2: #ef4444;
@@ -310,11 +305,126 @@ button {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
 }
-.app-shell > main::-webkit-scrollbar {
-  display: none;
+/* Barra de rolagem das páginas (o resto do app segue sem barra, ver "*"
+   acima): fina, sem trilho e com o polegar discreto, que ganha contraste
+   quando o mouse está sobre a área rolável e vira accent ao ser arrastado.
+   As propriedades padrão (scrollbar-width/color) valem no Chrome 121+,
+   Edge e Firefox — quando estão definidas, esses navegadores ignoram os
+   pseudo-elementos ::-webkit-scrollbar, que ficam só de fallback pro
+   Safari mais antigo. */
+.app-shell > main,
+.auth-panel {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 35%, transparent) transparent;
+}
+.app-shell > main:hover,
+.auth-panel:hover {
+  scrollbar-color: color-mix(in srgb, var(--muted) 60%, transparent) transparent;
+}
+.app-shell > main::-webkit-scrollbar,
+.auth-panel::-webkit-scrollbar {
+  display: block;
+  width: 8px;
+}
+.app-shell > main::-webkit-scrollbar-track,
+.auth-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+.app-shell > main::-webkit-scrollbar-thumb,
+.auth-panel::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 35%, transparent);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+.app-shell > main::-webkit-scrollbar-thumb:hover,
+.auth-panel::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--muted) 70%, transparent);
+}
+.app-shell > main::-webkit-scrollbar-thumb:active,
+.auth-panel::-webkit-scrollbar-thumb:active {
+  background-color: var(--accent);
+}
+/* Pontinhos de navegação entre coleções (ver CollectionDots.tsx): fixos no
+   canto direito, logo à esquerda da barra de rolagem, centralizados na
+   altura. Discretos por padrão; o da coleção que está passando pela tela
+   cresce e ganha contraste. O nome aparece à esquerda ao passar o mouse. */
+.collection-dots {
+  position: fixed;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  max-height: 80vh;
+}
+.collection-dot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 14px;
+  padding: 0;
+  background: none;
+}
+.collection-dot::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--muted) 45%, transparent);
+  transition:
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    background 0.22s;
+}
+.collection-dot:hover::before {
+  background: var(--muted);
+}
+.collection-dot.is-active::before {
+  transform: scale(1.6);
+  background: var(--text);
+}
+.collection-dot:focus-visible {
+  outline-offset: 1px;
+}
+.collection-dot-label {
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translate(4px, -50%);
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
+}
+.collection-dot:hover .collection-dot-label,
+.collection-dot:focus-visible .collection-dot-label {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+/* Em telas estreitas não sobra espaço ao lado do conteúdo. */
+@media (max-width: 720px) {
+  .collection-dots {
+    display: none;
+  }
 }
 .sticky-header {
   position: sticky;
@@ -344,7 +454,7 @@ button {
   align-items: center;
 }
 .brand img {
-  height: 33px;
+  height: 48px;
   width: auto;
 }
 .header-actions {
@@ -352,19 +462,12 @@ button {
   display: flex;
   align-items: center;
   gap: 14px;
-}
-.theme-toggle {
-  width: 38px;
-  height: 38px;
-  display: grid;
-  place-items: center;
-  color: var(--muted);
-  background: var(--raised);
-  border: 1px solid var(--border);
-  border-radius: 50%;
-}
-.theme-toggle:hover {
-  color: var(--text);
+  /* Sem a barra de busca (perfil público, ?perfil=, ver ".search-bar.header-add-bar"),
+     não sobra nenhum irmão "flex:1" pra empurrar isto pra ponta direita — o
+     margin-left:auto garante a mesma posição nos dois casos; quando a barra
+     de busca existe, ela já consome o espaço livre antes, então isto não
+     muda nada. */
+  margin-left: auto;
 }
 .workspace-label {
   font-size: 12px;
@@ -425,7 +528,8 @@ button {
   padding-top: 6px;
   border-top: 1px solid var(--border);
 }
-.account-menu-items button {
+.account-menu-items button,
+.account-menu-items a {
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -437,9 +541,15 @@ button {
   color: var(--text);
   background: transparent;
   text-align: left;
+  text-decoration: none;
+  box-sizing: border-box;
 }
-.account-menu-items button:hover {
+.account-menu-items button:hover,
+.account-menu-items a:hover {
   background: var(--bg);
+}
+.account-menu-items .danger-text {
+  color: #ed9292;
 }
 .hero {
   text-align: center;
@@ -595,40 +705,169 @@ textarea::placeholder {
   width: 100%;
   margin: 0 auto;
 }
-/* Cabeçalho do perfil público (App.tsx, ?perfil=<id>), inspirado no Twitter —
-   avatar sobreposto à faixa colorida, nome/usuário, "entrou em" e seguidores,
-   acima da grade de coleções públicas (reaproveitada de ".library"/CollectionRow). */
+/* Cabeçalho do perfil público (App.tsx, ?perfil=<id>), inspirado no X/Twitter
+   — faixa colorida, avatar sobreposto, "..."/Mensagem/Seguir alinhados à
+   direita na mesma fileira do avatar, e nome/usuário/"entrou em"/estatísticas
+   de seguidores numa faixa própria abaixo, acima da grade de coleções
+   públicas (reaproveitada de ".library"/CollectionRow). */
 .public-profile-header {
   max-width: 1100px;
   width: 100%;
   margin: 0 auto;
   padding-top: 18px;
+  padding-bottom: 20px;
 }
 .public-profile-banner {
-  height: 120px;
+  position: relative;
+  /* aspect-ratio (não height fixo) pra combinar SEMPRE com a proporção
+     recortada no cliente (ver BANNER_ASPECT, App.tsx) — com height fixo, a
+     proporção real da caixa varia com a largura da tela (mais "quadrada" em
+     telas estreitas, já que a largura encolhe mas a altura não), então uma
+     imagem recortada numa proporção fixa e depois mostrada aqui com
+     object-fit:cover acaba cortada de novo, deslocando o enquadramento que a
+     pessoa escolheu no slider. No valor de referência (1100px, a largura
+     máxima do cabeçalho) isto dá a mesma altura de 180px de antes.
+     Combina como ".public-profile-header{max-width}" (bem acima) — se um
+     mudar, o outro (e BANNER_ASPECT/POST /api/auth/banner) precisa mudar
+     junto. */
+  aspect-ratio: 1100 / 180;
   border-radius: 20px;
+  overflow: hidden;
+}
+/* O gradiente vira um ::before (em vez de background+opacity direto no
+   elemento) pra que uma foto de capa enviada pelo usuário (o <img> abaixo)
+   fique em opacidade cheia por cima dele, em vez de herdar os 50% pensados
+   só pro placeholder. */
+.public-profile-banner::before {
+  content: "";
+  position: absolute;
+  inset: 0;
   background: linear-gradient(135deg, var(--accent-3), var(--accent) 55%, var(--accent-2) 140%);
   opacity: 0.5;
+}
+.public-profile-banner img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* Rótulo clicável com o <input type="file"> escondido por cima (mesma
+   técnica de ".upload", styles.css) — sem reaproveitar aquela classe direto:
+   ela também define "position", e como aparece bem mais abaixo no arquivo,
+   venceria a cascata e quebraria o posicionamento absoluto destes botões. */
+.public-profile-banner-edit,
+.public-profile-avatar-edit {
+  cursor: pointer;
+}
+.public-profile-banner-edit input,
+.public-profile-avatar-edit input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  cursor: pointer;
+}
+.public-profile-banner-edit {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: #000a;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  backdrop-filter: blur(4px);
+}
+.public-profile-banner-adjust {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  background: linear-gradient(to top, #000a, transparent);
+}
+.public-profile-banner-adjust input[type="range"] {
+  flex: 1;
+}
+.public-profile-banner-adjust-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.public-profile-banner-adjust-actions button {
+  padding: 8px 14px;
+  font-size: 12px;
+}
+.public-profile-avatar-edit {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #0007;
+  color: #fff;
 }
 .public-profile-main {
   display: flex;
   align-items: flex-end;
+  justify-content: space-between;
   gap: 16px;
   padding: 0 8px;
-  margin-top: -40px;
+  /* O quanto o avatar entra por cima do banner escala junto com o próprio
+     avatar (era -40px pra 84px; dobrando o avatar pra 168px, dobra também,
+     mantendo a mesma proporção) — se um mudar, o outro precisa acompanhar. */
+  margin-top: -80px;
+}
+/* Tanto no próprio perfil ("Editar Perfil" ao lado do avatar) quanto no de
+   outra pessoa (Mensagem/Seguir ao lado do avatar, menu "⋮" à direita) os
+   botões ficam agrupados perto do avatar, não espalhados pelas pontas da
+   fileira — daí trocar o "space-between" herdado por "flex-start". */
+.public-profile-main-actions {
+  justify-content: flex-start;
+}
+.public-profile-actions-top {
+  /* align-self próprio (em vez do "flex-end" herdado, pensado pro avatar
+     alto encostar no fundo da fileira) + margin-top: com "flex-end" a
+     margin-top não desloca a posição visível do item (o que fica colado ao
+     fundo é o que conta) — só com "flex-start" ela empurra o item pra baixo
+     de verdade, afastando-o do banner. Precisa ser maior que o quanto
+     ".public-profile-main" puxa a fileira pra cima (margin-top negativo
+     dela) mais uma folga — se aquele valor mudar (ex: avatar maior/menor),
+     este precisa acompanhar. */
+  align-self: flex-start;
+  margin-top: 100px;
+}
+.public-profile-actions-top .secondary,
+.public-profile-actions-top .primary {
+  border-radius: 999px;
+}
+/* Único item depois do avatar que deve ir pra ponta oposta da fileira (em
+   vez de ficar agrupado ao lado dele, como Mensagem/Seguir) — margin-left:
+   auto consome todo o espaço livre à esquerda dele, empurrando só o menu
+   "⋮" (e o que viesse depois dele) até a borda direita. */
+.public-profile-menu-standalone {
+  margin-left: auto;
 }
 .public-profile-avatar {
   --orb: #9aa0a6;
-  width: 84px;
-  height: 84px;
+  position: relative;
+  width: 168px;
+  height: 168px;
   flex-shrink: 0;
   display: grid;
   place-items: center;
   border-radius: 50%;
   background: var(--orb);
-  border: 4px solid var(--bg);
+  border: 8px solid var(--bg);
   color: #fff;
-  font-size: 30px;
+  font-size: 60px;
   font-weight: 700;
   text-shadow: 0 1px 3px #0009;
   overflow: hidden;
@@ -638,11 +877,33 @@ textarea::placeholder {
   height: 100%;
   object-fit: cover;
 }
+.public-profile-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 10px;
+}
+.public-profile-actions .secondary,
+.public-profile-actions .primary {
+  padding: 9px 16px;
+  font-size: 12px;
+}
+.public-profile-menu {
+  position: relative;
+}
+.public-profile-menu .icon-button {
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--raised);
+}
+.public-profile-menu-panel {
+  width: 220px;
+}
 .public-profile-info {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding-bottom: 6px;
+  padding: 14px 8px 0;
 }
 .public-profile-info h2 {
   font-size: 20px;
@@ -662,6 +923,17 @@ textarea::placeholder {
 .public-profile-meta strong {
   color: var(--text);
 }
+.public-profile-stats {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 2px;
+}
+.public-profile-stats strong {
+  color: var(--text);
+}
 .library-heading {
   max-width: 1100px;
   width: 100%;
@@ -677,14 +949,13 @@ textarea::placeholder {
   width: 100%;
   margin: 0 auto;
   display: flex;
-  gap: 4px;
-  padding-top: 18px;
-  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
 }
 .home-tabs button {
-  padding: 8px 16px;
-  border-radius: 999px;
-  font-size: 13px;
+  position: relative;
+  padding: 15px 18px;
+  border-radius: 0;
+  font-size: 14px;
   font-weight: 600;
   color: var(--muted);
 }
@@ -693,7 +964,16 @@ textarea::placeholder {
   background: var(--raised);
 }
 .home-tabs button.active {
-  color: var(--accent-ink);
+  color: var(--text);
+}
+.home-tabs button.active::after {
+  content: "";
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 0;
+  height: 3px;
+  border-radius: 999px 999px 0 0;
   background: var(--accent);
 }
 .under-construction > svg {
@@ -718,25 +998,6 @@ textarea::placeholder {
   display: flex;
   flex-direction: column;
   gap: 20px;
-}
-.feed-subtabs {
-  display: flex;
-  gap: 4px;
-}
-.feed-subtabs button {
-  padding: 8px 16px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--muted);
-}
-.feed-subtabs button:hover {
-  color: var(--text);
-  background: var(--raised);
-}
-.feed-subtabs button.active {
-  color: var(--accent-ink);
-  background: var(--accent);
 }
 .community-empty {
   text-align: center;
@@ -769,6 +1030,13 @@ textarea::placeholder {
   text-decoration: none;
 }
 .feed-author-link:hover strong {
+  text-decoration: underline;
+}
+.hover-card-name-link {
+  color: inherit;
+  text-decoration: none;
+}
+.hover-card-name-link:hover strong {
   text-decoration: underline;
 }
 /* Cartão de perfil ao passar o mouse no nome do autor da publicação (ver
@@ -910,10 +1178,321 @@ textarea::placeholder {
   line-height: 1.5;
   margin: 0 0 14px;
 }
+/* Layout experimental de cards grandes tipo pôster (ver PosterRow.tsx e
+   POSTER_LAYOUT_PREVIEW em Community.tsx) — só no feed da Comunidade, pra
+   comparar lado a lado com o pill de sempre. Nada daqui é usado por
+   ".pill"/CollectionRow (ver comentário lá) — apagar este bloco inteiro (e
+   PosterRow.tsx) não afeta em nada o layout de "Suas coleções". */
+.poster-header {
+  margin-bottom: 10px;
+}
+.poster-title {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+.poster-description {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0;
+}
+.poster-row-wrap {
+  position: relative;
+}
+.poster-expand-toggle {
+  position: absolute;
+  top: -6px;
+  right: 0;
+  z-index: 2;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--muted);
+  background: var(--raised);
+  border: 1px solid var(--border);
+}
+.poster-expand-toggle:hover {
+  color: var(--text);
+  background: var(--bg);
+}
+/* Sempre 4 colunas (nunca mais, nunca menos por causa da largura disponível)
+   — grid em vez de flex-wrap de propósito: um flex row só quebra linha
+   quando os itens não cabem mais, o que deixaria 5 ou 6 cards numa linha só
+   em telas largas. Com menos de 4 itens na página, os que sobram (ver
+   "repeat(4, ...)") ficam vazios em vez de esticar os cards existentes. */
+.poster-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px 14px;
+  padding-top: 26px;
+}
+.poster-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  color: inherit;
+  text-decoration: none;
+}
+/* Card de repouso: só a imagem (2:3) + o nome embaixo, fora dela. */
+.poster-media {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border-radius: 10px;
+  overflow: hidden;
+  color: #fff;
+  /* Nunca "border": um "border: 2px solid transparent" ainda reserva os 2px
+     no box, e como o fundo colorido do pôster (background inline, ver
+     PosterRow.tsx) não pinta por baixo da borda, sobra um aro escuro visível
+     ao redor do card mesmo em repouso — exatamente o que devia sumir.
+     box-shadow desenha por cima, sem mexer no box nem deixar esse aro. */
+  box-shadow: 0 0 0 0 transparent;
+  transition: box-shadow 180ms ease;
+}
+.poster-media-link {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+.poster-media-fill {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.poster-media-fill svg {
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.poster-media-fill img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* Imagem de origem menor que o próprio pôster (ver useIsSmallSource em
+   PosterRow.tsx, ex.: o favicon .ico pequeno da Epic Games) — nada de
+   esticar/cobrir (ficaria borrada); mostra no tamanho real, centralizada. */
+.poster-media-fill img.is-small-source {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+/* Passar o cursor rapidamente (sem parar) só faz isso: mini zoom + borda no
+   card pequeno. Nada de painel/nome aqui — isso só acontece no card grande
+   (".poster-expanded" abaixo), que nem tem essa borda. */
+.poster-card:hover .poster-media {
+  box-shadow: 0 0 0 2px var(--text);
+}
+.poster-card:hover .poster-media-fill img,
+.poster-card:hover .poster-media-fill svg {
+  transform: scale(1.06);
+}
+.poster-name {
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* Card grande: aparece por cima do de repouso (não no lugar dele — ambos
+   ficam no DOM, este só fica visível por cima) quando o cursor demora um
+   pouco, maior que o normal, como o hover da Netflix. Nasce pequeno e
+   transparente, cresce até o tamanho/opacidade final sozinho (ver
+   @keyframes poster-expand-in) assim que é inserido no DOM — não precisa de
+   nenhuma classe "entrando"/"entrou" controlada por JS pra isso (só a saída,
+   ver ".is-leaving" mais abaixo, precisa de um pouco de JS pra não desmontar
+   antes da animação acabar).
+   Reaproveitado em dois lugares com posicionamento bem diferente — largura
+   fixa (não "%") de propósito, pra servir aos dois sem depender do tamanho
+   do pai: aqui no feed da Comunidade (ver PosterRow.tsx, ".poster-card >"
+   abaixo) E em "Suas coleções"/perfil público (ver renderFavoriteOverlays em
+   App.tsx, ".favorite-preview-anchor >" abaixo), onde quem posiciona/
+   centraliza já é o próprio âncora calculado em JS (mesmo esquema de sempre
+   do cartão de prévia), não este elemento. */
+.poster-expanded {
+  width: 220px;
+  z-index: 10;
+  border-radius: 10px;
+  box-shadow: 0 20px 50px #0008;
+}
+.poster-expanded.is-leaving {
+  pointer-events: none;
+}
+/* Contexto do feed: cresce mais largo por cima da própria grade (ver
+   comentário acima), então precisa se posicionar/centralizar sozinho. */
+.poster-card > .poster-expanded {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  animation: poster-expand-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.poster-card > .poster-expanded.is-leaving {
+  animation: poster-expand-out-centered 220ms cubic-bezier(0.4, 0, 0.7, 1) both;
+}
+@keyframes poster-expand-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.82);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+}
+@keyframes poster-expand-out-centered {
+  from {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.9);
+  }
+}
+/* Contexto de "Suas coleções"/perfil público: quem já posiciona e centraliza
+   é ".favorite-preview-anchor" (âncora calculada em JS a partir do card de
+   repouso, ver schedulePreviewCard em App.tsx) — aqui é só o conteúdo visível
+   dentro dela, sem posicionamento/transform própria. */
+.favorite-preview-anchor > .poster-expanded {
+  position: relative;
+  animation: poster-expand-in-plain 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.favorite-preview-anchor > .poster-expanded.is-leaving {
+  animation-name: poster-expand-out-plain;
+}
+@keyframes poster-expand-in-plain {
+  from {
+    opacity: 0;
+    transform: scale(0.82);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes poster-expand-out-plain {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+}
+/* Cantos arredondados/recorte só na imagem e só no painel (não no
+   ".poster-expanded" como um todo) de propósito: um overflow:hidden ali
+   prenderia o menu do ShareButton ("Copiar link"/"Compartilhar via...")
+   dentro do card, igual ao bug já corrigido em ".favorite-preview" no
+   App.tsx — aqui nem chega a precisar, já que nada corta nada em volta. */
+.poster-expanded-media {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px 10px 0 0;
+  overflow: hidden;
+  color: #fff;
+}
+.poster-expanded-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.poster-expanded-media img.is-small-source {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+/* Nome sobreposto na própria imagem, só aqui no card grande (pedido: no
+   repouso ele fica fora, ver ".poster-name") — gradiente atrás pra
+   continuar legível em cima de qualquer cor/imagem de fundo. */
+.poster-expanded-title {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 20px 10px 8px;
+  background: linear-gradient(to top, #000000b3, transparent);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+/* Painel escuro — "mais ou menos um terço" do card grande (ver rascunho):
+   com a imagem em 4:3 (mais baixa que os 2:3 do card pequeno) o conteúdo
+   deste painel (descrição + ícones) chega perto dessa proporção sozinho,
+   sem precisar forçar uma altura fixa. */
+.poster-expanded-panel {
+  background: var(--raised);
+  border-radius: 0 0 10px 10px;
+  padding: 10px 10px 8px;
+}
+.poster-expanded-description {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.poster-expanded-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 14px;
+}
+/* ">" de propósito (não um descendente qualquer): o ShareButton (ver
+   ShareButton.tsx) também tem botões DENTRO do próprio menu suspenso
+   (".share-menu-panel", "Copiar link"/"Compartilhar via...") — esses já têm
+   o próprio estilo (ver ".share-menu .share-menu-panel button" mais abaixo)
+   e não podem herdar este aqui por engano só por estarem aninhados dentro de
+   ".share-menu". Filho direto pega só o botão-gatilho de cada ação. */
+.poster-expanded-actions > button,
+.poster-expanded-actions > .share-menu > button {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px;
+}
+.poster-expanded-actions > button:hover,
+.poster-expanded-actions > .share-menu > button:hover {
+  color: var(--text);
+}
+.poster-expanded-actions > button.active {
+  color: var(--accent);
+}
+.poster-page-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 10px;
+}
 .feed-post-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
   padding-top: 14px;
   border-top: 1px solid var(--border);
 }
@@ -1024,6 +1603,52 @@ textarea::placeholder {
 .comment-menu-panel button.menu-danger {
   color: #e5484d;
 }
+.share-menu {
+  position: relative;
+  display: inline-flex;
+}
+.share-menu-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 190px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px #0004;
+  z-index: 20;
+}
+/* Especificidade extra (".share-menu" + ".share-menu-panel", não só a
+   segunda) de propósito: o botão-gatilho do ShareButton mora dentro de
+   várias barras de ação diferentes (".poster-expanded-actions button",
+   ".feed-post-actions button", ...), cada uma com seu próprio estilo de
+   botão redondo/pill — sem essa especificidade a mais, a ordem de quem vem
+   depois no arquivo decidia (foi o que deixou "Copiar link"/"Compartilhar
+   via..." espremidos num círculo de 32px dentro do card de favorito). */
+.share-menu .share-menu-panel button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  height: auto;
+  padding: 8px;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  color: var(--text);
+  background: none;
+}
+.share-menu .share-menu-panel button:hover {
+  background: var(--bg);
+  border-color: transparent;
+}
 .feed-comment-head strong {
   font-size: 15px;
 }
@@ -1124,6 +1749,33 @@ h2 {
 .share-button {
   font-size: 10px;
   color: var(--muted);
+  cursor: pointer;
+  transition: color 0.18s;
+}
+.share-button:hover,
+.share-button:focus-within {
+  color: var(--accent);
+}
+/* Importar: o <input type="file"> fica visualmente escondido (em vez de
+   transparente por cima do rótulo, como em ".upload") — assim o cursor de mão
+   vale no rótulo inteiro e o navegador não mostra o tooltip nativo "Nenhum
+   arquivo escolhido". Continua focável pelo teclado (Tab + Enter/Espaço). */
+.share-button.upload {
+  color: var(--muted);
+  font-size: 10px;
+  gap: 4px;
+}
+.share-button.upload:hover,
+.share-button.upload:focus-within {
+  color: var(--accent);
+}
+.share-button.upload input {
+  inset: auto;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  pointer-events: none;
 }
 .collection {
   margin-bottom: 27px;
@@ -1162,6 +1814,32 @@ h3 {
   color: var(--muted);
   margin-left: 1px;
 }
+.collection-saved-from {
+  font-weight: 400;
+  color: var(--muted);
+}
+.collection-saved-from a {
+  color: var(--muted);
+  text-decoration: underline;
+}
+.collection-saved-from a:hover {
+  color: var(--text);
+}
+.collection-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.collection-unsave {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-decoration: underline;
+  padding: 2px 4px;
+}
+.collection-unsave:hover {
+  color: var(--text);
+}
 .icon-button {
   height: 29px;
   width: 29px;
@@ -1193,26 +1871,24 @@ h3 {
   background: none;
   box-shadow: none;
 }
+/* Era uma cápsula bem arredondada (border-radius: 70px) feita pra uma única
+   fileira de ícones pequenos — com os cards grandes tipo pôster (ver
+   PosterThumb), esse arredondado extremo ficava estranho numa caixa alta de
+   várias linhas, então caiu pro mesmo cantinho suave do resto dos cards. */
 .pill {
   position: relative;
-  border-radius: 70px;
+  border-radius: 20px;
   background: linear-gradient(120deg, var(--surface), var(--bg));
   border: 1px solid var(--border);
-  padding: 12px 12px;
+  padding: 16px 12px;
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 82px;
   box-shadow: var(--shadow);
-}
-.pill.is-expanded {
-  min-height: 0;
-  padding: 18px 16px 14px;
-  border-radius: 30px;
 }
 .pill.is-expanded .favorites {
   align-content: center;
-  row-gap: 14px;
+  row-gap: 24px;
 }
 /* Barra da coleção (expandir/ordenar/adicionar/editar/excluir): fica na mesma
    linha do nome/contagem, fora do container (ver .collection-heading) — some
@@ -1264,10 +1940,37 @@ h3 {
   color: var(--text);
   background: var(--raised);
 }
+/* "Atualizar imagens" girando enquanto a rotina roda no servidor — sem o
+   esmaecido padrão de button:disabled, que faria parecer travado. */
+.collection-controls button.is-refreshing {
+  color: var(--accent);
+  opacity: 1;
+}
+.collection-controls button.is-refreshing svg {
+  animation: collection-refresh-spin 0.9s linear infinite;
+}
+@keyframes collection-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .collection-controls button.is-refreshing svg {
+    animation-duration: 2.4s;
+  }
+}
 .collection-controls button.active {
   color: var(--accent);
 }
-.collection-controls button:last-child:hover {
+/* ".favorite-controls" (barra de um favorito específico) sempre tem editar +
+   excluir juntos, então ":last-child" ainda identifica excluir de forma
+   segura ali. Já a barra da COLEÇÃO agora mostra o botão de
+   expandir/recolher pra qualquer visitante (não só o dono, ver
+   ".collection-controls" acima) — quando só ele aparece (somente leitura),
+   vira ":last-child" sozinho, então excluir precisa da própria classe pra
+   não herdar esse hover vermelho por engano. */
+.collection-controls.favorite-controls button:last-child:hover,
+.collection-control-remove:hover {
   color: #f09b9b;
   background: #b73c3c22;
 }
@@ -1342,94 +2045,14 @@ h3 {
   z-index: 12;
   left: 0;
   top: 0;
-  transform: translate(-50%, -65px);
-}
-.favorite-preview {
-  position: relative;
-  width: 220px;
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--raised);
-  border: 1px solid var(--border);
-  box-shadow: 0 0 50px 6px #00000070;
-  transform-origin: 50% 65px;
-  animation: favorite-preview-in 280ms cubic-bezier(0.33, 1, 0.68, 1) both;
-}
-/* Link "esticado" cobrindo o card inteiro (clicar em qualquer lugar dele abre
-   o favorito numa aba nova), como um card de catálogo — os botões continuam
-   clicáveis por cima porque têm z-index maior que esse overlay. */
-.favorite-preview-link {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-}
-/* Encolhe de volta até o tamanho do ícone — o mesmo ponto de partida do
-   keyframe de entrada (scale 0.4, centrado no ícone) — em vez de só desfocar
-   no próprio tamanho. Classe à parte pra trocar a animação em andamento assim
-   que o mouse sai do card/ícone; o timer em deferPreviewCardClear no App.tsx
-   (que desmonta o card de fato) tem que ficar igual a essa duração pra não
-   cortar a animação no meio. */
-.favorite-preview.is-leaving {
-  animation: favorite-preview-out 220ms cubic-bezier(0.4, 0, 0.7, 1) both;
-}
-@keyframes favorite-preview-in {
-  0% {
-    opacity: 0;
-    transform: scale(0.4);
-    filter: blur(10px);
-  }
-  55% {
-    opacity: 1;
-    filter: blur(0);
-  }
-  78% {
-    transform: scale(1.035);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1);
-    filter: blur(0);
-  }
-}
-@keyframes favorite-preview-out {
-  from {
-    opacity: 1;
-    transform: scale(1);
-    filter: blur(0);
-  }
-  to {
-    opacity: 0;
-    transform: scale(0.4);
-    filter: blur(6px);
-  }
-}
-.favorite-preview-media {
-  position: relative;
-  width: 100%;
-  height: 130px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.favorite-preview-media img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-/* Favicon pequeno de origem (ver PreviewFavicon no App.tsx): tamanho fixo e
-   moderado em vez de esticar pra cobrir os 220px do card, que deixaria a
-   imagem visivelmente pixelizada/borrada. */
-.favorite-preview-media img.is-small-source {
-  width: 72px;
-  height: 72px;
-  object-fit: contain;
-  filter: drop-shadow(0 2px 10px #00000050);
-}
-.favorite-preview-media span {
-  font-size: 44px;
-  font-weight: 700;
-  color: #fff;
-  text-shadow: 0 2px 8px #0005;
+  /* Sem deslocamento vertical fixo (era "-65px", pensado pro ícone pequeno
+     de antes): o card agora nasce do TOPO do favorito (ver
+     schedulePreviewCard em App.tsx, que ancora em favoriteRect.top puro, sem
+     somar a altura) — um deslocamento fixo não escala com card grande tipo
+     pôster (ver PosterThumb), que é bem mais alto que o ícone redondo de
+     antes; foi isso que fazia o cartão de prévia nascer bem mais baixo do
+     que devia. */
+  transform: translate(-50%, 0);
 }
 .favorite-preview-edit {
   position: absolute;
@@ -1446,74 +2069,24 @@ h3 {
 .favorite-preview-edit:hover {
   background: #000000a0;
 }
-/* Nome sobreposto no canto inferior esquerdo da própria thumbnail (como um
-   título de capa), com um degradê atrás pra continuar legível em cima de
-   qualquer imagem/cor de fundo. */
-.favorite-preview-name {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  padding: 20px 10px 8px;
-  background: linear-gradient(to top, #000000b3, transparent);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  text-shadow: 0 1px 4px #0007;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.favorite-preview-footer {
-  padding: 12px 14px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.favorite-preview-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.favorite-preview-actions button {
-  position: relative;
-  z-index: 2;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  color: var(--text);
-  border: 1.5px solid var(--muted);
-}
-.favorite-preview-actions button:hover {
-  border-color: var(--text);
-  background: var(--surface);
-}
-.favorite-preview-actions button.active {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-.favorite-preview-meta span {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  font-size: 12px;
-  color: var(--muted);
-}
 .favorites {
   flex: 1;
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(var(--page-size, 10), minmax(0, 1fr));
+  /* Fallback 7 (não mais 10): a grade das seções (pastas importadas, ver
+     ".collection-section-favorites" abaixo) nunca paginou, nem define
+     "--page-size" própria — cai direto nesse valor, que agora precisa bater
+     com o pageSize padrão de "Suas coleções" (ver CollectionRow em App.tsx),
+     já que os cards viraram pôsteres grandes, não ícones pequenos. */
+  grid-template-columns: repeat(var(--page-size, 7), minmax(0, 1fr));
   /* "start" (não "center"): um grupo com "Exibir nome" ligado fica mais alto
      que um favorito comum (o rótulo embaixo soma altura) — centralizado, isso
      empurrava os favoritos mais baixos (mais curtos) pra baixo, desalinhando
      os topos dos ícones numa mesma linha. Começando os dois pelo topo, o
      rótulo extra só estica a célula pra baixo, sem mexer na posição do ícone. */
   align-items: start;
-  justify-items: center;
-  gap: clamp(3px, 0.8vw, 11px);
+  justify-items: stretch;
+  gap: clamp(10px, 1.4vw, 20px);
   padding: 0 7px;
   will-change: opacity, transform;
 }
@@ -1584,6 +2157,71 @@ h3 {
   display: flex;
   align-items: center;
 }
+/* Só o link do favorito SOLTO (main/section grid, ver PosterThumb em
+   App.tsx) — o link dentro do painel de grupo (".group-expand-icons") e o
+   botão do próprio tile de grupo continuam com ".favorite > a"/".sphere"
+   comuns, pequenos, sem imagem+nome empilhados (ver comentário em
+   PosterThumb sobre por que não usam este aqui). */
+.favorite-poster-link {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+/* Card grande tipo pôster (mesmo visual do PosterThumb do feed da
+   Comunidade, ver PosterRow.tsx) — reaproveita o mesmo tratamento de
+   imagem pequena/borrada (".is-small-source") e o mesmo zoom+aro no hover
+   rápido, só que aqui dentro do fluxo normal da grade de "Suas coleções"
+   (não precisa do card grande/"segundo card" — o hover de 250ms já mostrado
+   em ".favorite-preview" cumpre esse papel, ver comentário lá). */
+.poster-tile {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--orb);
+  color: #fff;
+  box-shadow: 0 0 0 0 transparent;
+  transition: box-shadow 180ms ease;
+}
+.poster-tile.poster-tile-square {
+  border-radius: 0;
+}
+.poster-tile.link-broken {
+  filter: grayscale(0.85) opacity(0.55);
+}
+.poster-tile.link-broken:hover {
+  filter: grayscale(0.5) opacity(0.8);
+}
+.poster-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.poster-tile img.is-small-source {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.poster-tile > span {
+  font-size: 28px;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 1px 3px #0009;
+}
+.favorite-poster-link:hover .poster-tile {
+  box-shadow: 0 0 0 2px var(--text);
+}
+.favorite-poster-link:hover .poster-tile img {
+  transform: scale(1.06);
+}
 .sphere {
   --orb: #8b5cf6;
   display: inline-flex;
@@ -1636,68 +2274,108 @@ h3 {
      igual pros quatro lados, em vez de empilhar mais embaixo do que em cima. */
   box-shadow: 0 0 12px color-mix(in srgb, var(--orb) 40%, transparent);
 }
-/* Grupo de favoritos (várias molduras numa só, estilo App Library do iPhone):
-   reaproveita o tamanho/formato/hover da .sphere comum, só trocando o
-   conteúdo por uma mini-grade 2x2 dos favicons de dentro. */
+/* Agrupamento de favoritos (estilo pasta do menu Iniciar do Windows 11): card
+   do mesmo tamanho do pôster de um favorito solto (ver ".poster-tile"), com
+   fundo translúcido discreto e uma grade 2x2 dos favicons de dentro — cada
+   um num quadrado próprio, com respiro em volta, em vez de espremidos. */
 .group-tile {
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  padding: 14%;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
   cursor: pointer;
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+.group-tile.group-tile-square {
+  border-radius: 0;
 }
 .group-tile:hover {
-  transform: translateY(-4px) scale(1.06);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--orb) 40%, transparent);
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  border-color: color-mix(in srgb, var(--text) 14%, transparent);
 }
 .group-tile-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 2px;
-  width: 66%;
-  height: 66%;
+  grid-auto-rows: 1fr;
+  gap: 14%;
+  width: 100%;
+  aspect-ratio: 1;
 }
-.group-tile-grid img,
-.group-tile-letter {
+.group-tile-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  border-radius: 8px;
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.group-tile:hover .group-tile-cell {
+  transform: scale(1.06);
+}
+.group-tile-cell img {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  border-radius: 22%;
-  background: #ffffff25;
+  border-radius: 6px;
 }
 .group-tile-letter {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 8px;
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  background: var(--orb, var(--accent));
+  font-size: clamp(10px, 1.2vw, 16px);
   font-weight: 600;
   color: #fff;
+  text-shadow: 0 1px 3px #0009;
 }
 .group-tile-badge {
   position: absolute;
-  right: -4px;
-  bottom: -4px;
+  right: 6px;
+  bottom: 6px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 999px;
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 600;
   line-height: 1;
-  padding: 3px 4px;
-  color: var(--text);
+  padding: 3px 5px;
+  color: var(--muted);
 }
 /* "Exibir nome" (grupo): rótulo visível embaixo do tile, em vez do texto só
    pro leitor de tela (.sr-only) usado quando essa opção está desligada. Bloco
    (não inline) pra sempre quebrar numa linha nova abaixo do ícone, que é
    inline-flex — sem precisar virar ".favorite" inteiro num flex column. */
 .favorite-name {
-  display: block;
+  display: -webkit-box;
   margin-top: 9px;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
-  color: #fff;
+  /* Era "#fff" fixo — ficava quase invisível no tema claro, já que o rótulo
+     mora sobre o fundo da página (var(--bg)), não sobre a esfera colorida. */
+  color: var(--text);
   white-space: normal;
   overflow-wrap: break-word;
   max-width: 100%;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .group-tile.is-expanded {
+  border-color: transparent;
   box-shadow: 0 0 0 2px var(--accent);
 }
 /* Painel que "brota" do próprio tile ao clicar nele sem o lápis ligado —
@@ -1728,17 +2406,37 @@ h3 {
   background: var(--raised);
   border: 1px solid var(--border);
   box-shadow: 0 12px 32px #0007;
-  animation: favorite-preview-in 220ms cubic-bezier(0.33, 1, 0.68, 1) both;
+  animation: panel-pop-in 220ms cubic-bezier(0.33, 1, 0.68, 1) both;
 }
+/* Nasce um pouco encolhido e desfocado, cresce até o tamanho/nitidez final —
+   único uso restante é este painel (o cartão de prévia de favorito passou a
+   usar "poster-expand-in"/"poster-expand-in-plain", ver mais acima). */
+@keyframes panel-pop-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.4);
+    filter: blur(10px);
+  }
+  55% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  78% {
+    transform: scale(1.035);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+}
+/* Só o botão de fechar (o nome do grupo já aparece embaixo do card, não se
+   repete aqui) — alinhado à direita. */
 .group-expand-heading {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--muted);
-  margin-bottom: 8px;
+  justify-content: flex-end;
+  margin-bottom: 4px;
 }
 .group-expand-heading button {
   color: var(--muted);
@@ -2721,7 +3419,7 @@ textarea {
     gap: 12px;
   }
   .brand img {
-    height: 30px;
+    height: 38px;
     width: auto;
   }
   .header-add-bar {
@@ -2732,10 +3430,6 @@ textarea {
   }
   .header-actions {
     gap: 12px;
-  }
-  .theme-toggle {
-    width: 34px;
-    height: 34px;
   }
   .hero {
     padding: 24px 0;

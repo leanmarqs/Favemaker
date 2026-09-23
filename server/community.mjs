@@ -30,6 +30,15 @@
 // (CommunityPostReport), além de "seguir" (puramente informativo, alimenta a
 // contagem de seguidores do cartão) e "sobre esta conta" (data de criação da
 // conta de verdade por trás, quando existe).
+import {
+  bumpRelevance,
+  bumpCollectionRelevance,
+  resolveBookmarkOwner,
+  resolveCollectionOwner,
+  realOwnerId,
+  creditRelevance,
+  RELEVANCE_WEIGHT,
+} from "./relevance.mjs";
 const MAX_COMMENT_LENGTH = 500;
 const MAX_URLS_PER_COMMENT = 2;
 const COMMENT_RATE_LIMIT = 5;
@@ -77,6 +86,14 @@ const asComment = (comment) => ({
   text: comment.text,
   createdAt: comment.createdAt,
 });
+// Filtro de grupos visíveis fora da conta do dono (perfil público, feed da
+// Comunidade, itens salvos): o próprio grupo precisa ser público e, se for
+// um agrupamento dentro de uma seção (parentId), a seção também — senão uma
+// seção privada vazaria pelos agrupamentos de dentro dela.
+export const publicGroupWhere = {
+  isPublic: true,
+  OR: [{ parentId: null }, { parent: { isPublic: true } }],
+};
 export function installCommunity(app, prisma) {
   // Limite de comentários por minuto por dono — bem mais apertado que o
   // limite geral de 300 req/min da API (ver apiLimits em index.mjs), que
@@ -164,58 +181,299 @@ export function installCommunity(app, prisma) {
       hiddenPostIds: hiddenPostGroups.map((g) => g.postId),
     });
   });
+  // Dados completos dos favoritos ALHEIOS que o dono curtiu (CommunityItemLike),
+  // pro filtro "Com gostei" de "Suas coleções" conseguir mostrá-los mesmo sem
+  // uma cópia própria — curtir nunca copia nada (diferente de favoritar, que
+  // sempre cria a cópia em "Itens Salvos"), então sem esta rota o filtro só
+  // via os curtidos que por acaso já eram (ou vieram a ser) do próprio dono.
+  // Exclui bookmarks do PRÓPRIO dono (já aparecem via "Suas coleções" direto,
+  // sem precisar duplicar aqui) e qualquer um que tenha deixado de ser
+  // público nesse meio-tempo (a curtida continua registrada, só some do
+  // filtro até o autor publicar de novo).
+  app.get("/api/community/items/liked", async (req, res) => {
+    const ownerId = req.owner.id;
+    const likes = await prisma.communityItemLike.findMany({
+      where: { ownerId },
+      select: { bookmarkId: true },
+    });
+    const ids = likes.map((l) => l.bookmarkId);
+    if (!ids.length) return res.json({ items: [] });
+    const bookmarks = await prisma.bookmark.findMany({
+      where: {
+        id: { in: ids },
+        collection: { isPublic: true, ownerId: { not: ownerId } },
+        OR: [{ groupId: null }, { group: { isPublic: true } }],
+      },
+      include: { collection: { select: { isPublic: true } } },
+    });
+    res.json({
+      items: bookmarks.map(({ collection, ...b }) => ({ ...b, isPublic: collection.isPublic })),
+    });
+  });
+  // Todos os favoritos (com ou sem grupo) de uma coleção de verdade — usada
+  // tanto pra "curtir a publicação inteira marca todos os itens como
+  // curtidos" quanto pra copiar uma coleção alheia inteira ao salvá-la (ver
+  // rotas de like/save de publicação abaixo). null quando postId não
+  // corresponde a nenhuma Collection real (publicação fictícia do
+  // communityMock.ts) — nesse caso não há o que espalhar.
+  async function collectionWithItems(postId) {
+    return prisma.collection.findUnique({
+      where: { id: postId },
+      include: { bookmarks: true, groups: true },
+    });
+  }
   // Cada botão de curtir/salvar é um único POST que inverte o próprio estado
   // (existe → apaga, não existe → cria) — o cliente decide o rótulo mostrado
   // a partir da resposta, sem precisar de PUT/DELETE separados pra cada ação.
-  function toggleRoute(path, param, model, idField) {
+  // A interação em si (existir ou não a linha) é sempre registrada, mesmo
+  // sobre o próprio conteúdo do dono — é o que alimenta o filtro pessoal de
+  // "itens curtidos"/"itens salvos" dele. relevance (opcional) é só quem
+  // decide se isso também deve virar pontos de relevância: resolveOwner acha
+  // o dono de verdade do alvo (ou do próprio alvo, no caso de "seguir"), e
+  // creditRelevance() recusa o crédito quando esse dono é quem clicou —
+  // ninguém aumenta a própria relevância curtindo/salvando/seguindo o próprio
+  // conteúdo (ver server/relevance.mjs).
+  function toggleRoute(path, param, model, idField, relevance) {
     app.post(path, async (req, res) => {
       const ownerId = req.owner.id;
       const id = validId(req.params[param], param);
       const where = { [`ownerId_${idField}`]: { ownerId, [idField]: id } };
       const existing = await prisma[model].findUnique({ where });
-      if (existing) {
-        await prisma[model].delete({ where });
-        return res.json({ active: false });
+      const sign = existing ? -1 : 1;
+      if (existing) await prisma[model].delete({ where });
+      else await prisma[model].create({ data: { ownerId, [idField]: id } });
+      if (relevance) {
+        const targetOwnerId = await relevance.resolveOwner(prisma, id);
+        await creditRelevance(prisma, {
+          actingOwnerId: ownerId,
+          targetOwnerId,
+          bumpTarget: relevance.bumpTarget,
+          targetId: id,
+          weight: sign * relevance.weight,
+        });
       }
-      await prisma[model].create({ data: { ownerId, [idField]: id } });
-      res.json({ active: true });
+      res.json({ active: sign === 1 });
     });
   }
-  toggleRoute("/api/community/posts/:postId/like", "postId", "communityPostLike", "postId");
-  toggleRoute("/api/community/posts/:postId/save", "postId", "communityPostSave", "postId");
-  toggleRoute("/api/community/items/:bookmarkId/like", "bookmarkId", "communityItemLike", "bookmarkId");
-  toggleRoute("/api/community/items/:bookmarkId/save", "bookmarkId", "communityItemSave", "bookmarkId");
+  toggleRoute("/api/community/items/:bookmarkId/like", "bookmarkId", "communityItemLike", "bookmarkId", {
+    weight: RELEVANCE_WEIGHT.communityLike,
+    resolveOwner: resolveBookmarkOwner,
+    bumpTarget: bumpRelevance,
+  });
+  toggleRoute("/api/community/items/:bookmarkId/save", "bookmarkId", "communityItemSave", "bookmarkId", {
+    weight: RELEVANCE_WEIGHT.communitySave,
+    resolveOwner: resolveBookmarkOwner,
+    bumpTarget: bumpRelevance,
+  });
   toggleRoute("/api/community/comments/:commentId/like", "commentId", "communityCommentLike", "commentId");
   toggleRoute("/api/community/comments/:commentId/save", "commentId", "communityCommentSave", "commentId");
-  toggleRoute("/api/community/users/:authorId/follow", "authorId", "communityFollow", "authorId");
+  toggleRoute("/api/community/users/:authorId/follow", "authorId", "communityFollow", "authorId", {
+    weight: RELEVANCE_WEIGHT.follow,
+    resolveOwner: realOwnerId,
+    bumpTarget: null,
+  });
+  // Curtir a PUBLICAÇÃO inteira marca todos os favoritos dela como curtidos
+  // também (ver CommunityItemLike acima) — descurtir desfaz os dois ao mesmo
+  // tempo. Vale pra coleção própria ou alheia (só a relevância distingue os
+  // dois casos, via creditRelevance). Não usa toggleRoute genérico porque
+  // precisa desse espalhamento extra pros itens.
+  app.post("/api/community/posts/:postId/like", async (req, res) => {
+    const ownerId = req.owner.id;
+    const postId = validId(req.params.postId, "postId");
+    const where = { ownerId_postId: { ownerId, postId } };
+    const existing = await prisma.communityPostLike.findUnique({ where });
+    const sign = existing ? -1 : 1;
+    if (existing) await prisma.communityPostLike.delete({ where });
+    else await prisma.communityPostLike.create({ data: { ownerId, postId } });
+    const targetOwnerId = await resolveCollectionOwner(prisma, postId);
+    await creditRelevance(prisma, {
+      actingOwnerId: ownerId,
+      targetOwnerId,
+      bumpTarget: bumpCollectionRelevance,
+      targetId: postId,
+      weight: sign * RELEVANCE_WEIGHT.communityLike,
+    });
+    const collection = await collectionWithItems(postId);
+    if (collection) {
+      for (const bookmark of collection.bookmarks) {
+        const itemWhere = { ownerId_bookmarkId: { ownerId, bookmarkId: bookmark.id } };
+        if (sign === 1) {
+          await prisma.communityItemLike.upsert({ where: itemWhere, update: {}, create: { ownerId, bookmarkId: bookmark.id } });
+        } else {
+          await prisma.communityItemLike.deleteMany({ where: { ownerId, bookmarkId: bookmark.id } });
+        }
+        await creditRelevance(prisma, {
+          actingOwnerId: ownerId,
+          targetOwnerId,
+          bumpTarget: bumpRelevance,
+          targetId: bookmark.id,
+          weight: sign * RELEVANCE_WEIGHT.communityLike,
+        });
+      }
+    }
+    res.json({ active: sign === 1 });
+  });
+  // Salva a PUBLICAÇÃO (coleção) inteira:
+  // - coleção ALHEIA: liga/desliga uma REFERÊNCIA "cheia" (SavedCollection.full
+  //   = true) pra ela na aba "Itens Salvos" do visitante (ver GET
+  //   /api/saved-collections em server/index.mjs) — nunca uma cópia, então os
+  //   dados mostrados lá sempre acompanham a coleção original ao vivo, e o
+  //   visitante não pode editá-la. Desfazer o "Salvar" da publicação inteira
+  //   rebaixa a referência de volta pra parcial (full = false) em vez de
+  //   apagá-la, quando ainda sobra algum link salvo avulso dela (ver POST
+  //   /api/saved-items/:sourceId) — só apaga de vez se não sobrar nenhum.
+  // - coleção PRÓPRIA (o dono vendo sua própria publicação no feed): não cria
+  //   referência nenhuma, só marca cada favorito dela como salvo (mesmo
+  //   mecanismo de BookmarkSaveMark usado por "favoritar o próprio link" —
+  //   ver POST /api/saved-items/:sourceId), pra aparecer na filtragem de
+  //   itens salvos.
+  // Sem referência possível pra publicação fictícia (postId não corresponde a
+  // nenhuma Collection real): a interação ainda fica registrada (pro
+  // coração acender), só não há o que referenciar.
+  app.post("/api/community/posts/:postId/save", async (req, res) => {
+    const ownerId = req.owner.id;
+    const postId = validId(req.params.postId, "postId");
+    const where = { ownerId_postId: { ownerId, postId } };
+    const existing = await prisma.communityPostSave.findUnique({ where });
+    const sign = existing ? -1 : 1;
+    if (existing) await prisma.communityPostSave.delete({ where });
+    else await prisma.communityPostSave.create({ data: { ownerId, postId } });
+    const targetOwnerId = await resolveCollectionOwner(prisma, postId);
+    await creditRelevance(prisma, {
+      actingOwnerId: ownerId,
+      targetOwnerId,
+      bumpTarget: bumpCollectionRelevance,
+      targetId: postId,
+      weight: sign * RELEVANCE_WEIGHT.communitySave,
+    });
+    if (targetOwnerId === ownerId) {
+      // Coleção própria: marca/desmarca cada favorito como salvo, sem copiar.
+      const collection = await collectionWithItems(postId);
+      if (collection) {
+        if (sign === 1) {
+          await prisma.bookmarkSaveMark.createMany({
+            data: collection.bookmarks.map((b) => ({ ownerId, bookmarkId: b.id })),
+            skipDuplicates: true,
+          });
+        } else {
+          await prisma.bookmarkSaveMark.deleteMany({
+            where: { ownerId, bookmarkId: { in: collection.bookmarks.map((b) => b.id) } },
+          });
+        }
+      }
+      return res.status(sign === 1 ? 201 : 200).json({ active: sign === 1 });
+    }
+    if (sign === -1) {
+      const saved = await prisma.savedCollection.findUnique({
+        where: { ownerId_collectionId: { ownerId, collectionId: postId } },
+      });
+      if (saved) {
+        const itemCount = await prisma.savedCollectionItem.count({
+          where: { savedCollectionId: saved.id },
+        });
+        if (itemCount) await prisma.savedCollection.update({ where: { id: saved.id }, data: { full: false } });
+        else await prisma.savedCollection.delete({ where: { id: saved.id } });
+      }
+      return res.json({ active: false });
+    }
+    const source = await prisma.collection.findUnique({
+      where: { id: postId },
+      select: { id: true },
+    });
+    if (source) {
+      await prisma.savedCollection.upsert({
+        where: { ownerId_collectionId: { ownerId, collectionId: postId } },
+        update: { full: true },
+        create: { ownerId, collectionId: postId, full: true },
+      });
+    }
+    res.status(201).json({ active: true });
+  });
+  // Compartilhar (copiar link) uma publicação ou um item específico — no
+  // máximo um registro por dono (ver CommunityPostShare/CommunityItemShare
+  // no schema.prisma), só pra contar quantas pessoas distintas
+  // compartilharam e alimentar a relevância uma única vez por dono; cliques
+  // repetidos continuam copiando o link normalmente, só não pontuam de novo.
+  app.post("/api/community/posts/:postId/share", async (req, res) => {
+    const ownerId = req.owner.id;
+    const postId = validId(req.params.postId, "postId");
+    let created = true;
+    try {
+      await prisma.communityPostShare.create({ data: { ownerId, postId } });
+    } catch (e) {
+      if (e.code !== "P2002") throw e;
+      created = false;
+    }
+    if (created) {
+      const targetOwnerId = await resolveCollectionOwner(prisma, postId);
+      await creditRelevance(prisma, {
+        actingOwnerId: ownerId,
+        targetOwnerId,
+        bumpTarget: bumpCollectionRelevance,
+        targetId: postId,
+        weight: RELEVANCE_WEIGHT.share,
+      });
+    }
+    const shareCount = await prisma.communityPostShare.count({ where: { postId } });
+    res.json({ shared: true, shareCount });
+  });
+  app.post("/api/community/items/:bookmarkId/share", async (req, res) => {
+    const ownerId = req.owner.id;
+    const bookmarkId = validId(req.params.bookmarkId, "bookmarkId");
+    let created = true;
+    try {
+      await prisma.communityItemShare.create({ data: { ownerId, bookmarkId } });
+    } catch (e) {
+      if (e.code !== "P2002") throw e;
+      created = false;
+    }
+    if (created) {
+      const targetOwnerId = await resolveBookmarkOwner(prisma, bookmarkId);
+      await creditRelevance(prisma, {
+        actingOwnerId: ownerId,
+        targetOwnerId,
+        bumpTarget: bumpRelevance,
+        targetId: bookmarkId,
+        weight: RELEVANCE_WEIGHT.share,
+      });
+    }
+    const shareCount = await prisma.communityItemShare.count({ where: { bookmarkId } });
+    res.json({ shared: true, shareCount });
+  });
   // Cartão de perfil (hover no nome do autor) e o painel "Sobre esta conta"
-  // do menu "⋮" da publicação usam o mesmo endpoint: nº de seguidores é
-  // sempre real (ver CommunityFollow); memberSince só existe pra autor com
+  // do menu "⋮" da publicação usam o mesmo endpoint: nº de seguidores/seguindo
+  // é sempre real (ver CommunityFollow); memberSince só existe pra autor com
   // conta de verdade por trás (os autores fictícios do communityMock.ts não
   // têm Owner correspondente, então o cliente mostra um aviso de demonstração
   // nesse caso). Buscado sob demanda (ao abrir o cartão/painel), não numa
   // lista antecipada pra cada publicação do feed.
   app.get("/api/community/users/:authorId", async (req, res) => {
     const authorId = validId(req.params.authorId, "authorId");
-    const [followerCount, postCount, owner] = await Promise.all([
+    const [followerCount, followingCount, postCount, owner] = await Promise.all([
       prisma.communityFollow.count({ where: { authorId } }),
-      prisma.collection.count({ where: { ownerId: authorId, isPublic: true, isSavedItems: false } }),
+      prisma.communityFollow.count({ where: { ownerId: authorId } }),
+      prisma.collection.count({ where: { ownerId: authorId, isPublic: true } }),
       prisma.owner.findUnique({ where: { id: authorId }, select: { createdAt: true } }),
     ]);
-    res.json({ followerCount, postCount, memberSince: owner ? owner.createdAt : null });
+    res.json({ followerCount, followingCount, postCount, memberSince: owner ? owner.createdAt : null });
   });
   // Feed da aba Comunidade: coleções públicas de donos de verdade, mais
   // recentes primeiro por publishedAt (quando a coleção virou pública, não
   // quando foi criada — ver comentário no schema.prisma). O id da própria
   // coleção vira o postId usado em curtir/salvar/comentar/denunciar acima —
   // sem tabela de "posts" separada, a coleção pública JÁ É a publicação.
-  // Sem "where: isPublic" nos favoritos: um favorito não tem visibilidade
-  // própria (ver comentário no schema.prisma) — todos os da coleção já
-  // filtrada acima como pública aparecem, igual a /api/public/:id.
+  // Sem "where: isPublic" nos favoritos SEM grupo: um favorito solto não tem
+  // visibilidade própria (ver comentário no schema.prisma) — herda direto da
+  // coleção já filtrada acima como pública. Já os GRUPOS (seções e
+  // agrupamentos) têm seu próprio isPublic (ver comentário em BookmarkGroup
+  // no schema.prisma) — "where: isPublic" neles é o que permite uma coleção
+  // pública conter seções/agrupamentos privados: eles (e os favoritos lá
+  // dentro, que só existem aninhados no include abaixo) simplesmente não
+  // entram na resposta, igual a /api/public/:id.
   app.get("/api/community/feed", async (req, res) => {
     const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 50);
     const collections = await prisma.collection.findMany({
-      where: { isPublic: true, isSavedItems: false, publishedAt: { not: null } },
+      where: { isPublic: true, publishedAt: { not: null } },
       orderBy: { publishedAt: "desc" },
       take: limit,
       include: {
@@ -225,6 +483,7 @@ export function installCommunity(app, prisma) {
           orderBy: [{ order: "asc" }, { createdAt: "asc" }],
         },
         groups: {
+          where: publicGroupWhere,
           include: {
             bookmarks: {
               orderBy: [{ order: "asc" }, { createdAt: "asc" }],
@@ -234,25 +493,85 @@ export function installCommunity(app, prisma) {
       },
     });
     const postIds = collections.map((c) => c.id);
-    // Curtidas de QUALQUER outro dono (exclui o próprio visitante) — o
-    // cliente soma +1 por cima quando likedPostIds já inclui esse post (ver
-    // toggleLikePost em Community.tsx), então contar a própria curtida aqui
-    // também contaria ela duas vezes.
-    const likeCounts = postIds.length
-      ? await prisma.communityPostLike.groupBy({
-          by: ["postId"],
-          where: { postId: { in: postIds }, NOT: { ownerId: req.owner.id } },
-          _count: { ownerId: true },
-        })
-      : [];
+    // Todo bookmarkId da resposta (soltos + dentro de grupo) — pro cartão de
+    // cada favorito no feed poder mostrar contagem de curtida/favoritado/
+    // compartilhamento própria, igual ao que já existe por publicação
+    // inteira logo abaixo (mesmo padrão de groupBy, só que por bookmarkId).
+    const itemIds = collections.flatMap((c) => [
+      ...c.bookmarks.map((b) => b.id),
+      ...c.groups.flatMap((g) => g.bookmarks.map((b) => b.id)),
+    ]);
+    // Curtidas/salvamentos de QUALQUER outro dono (exclui o próprio
+    // visitante) — o cliente soma +1 por cima quando likedPostIds/
+    // savedPostIds já inclui esse post (ver toggleLikePost/toggleSavePost em
+    // Community.tsx), então contar a própria interação aqui também contaria
+    // ela duas vezes. Compartilhamento não tem esse "+1 otimista" (não existe
+    // "descompartilhar" — ver POST .../share acima, que já devolve a
+    // contagem TOTAL depois de cada clique), por isso conta todo mundo
+    // direto, sem excluir o visitante.
+    const [likeCounts, saveCounts, shareCounts, itemLikeCounts, itemSaveCounts, itemShareCounts] =
+      postIds.length
+        ? await Promise.all([
+            prisma.communityPostLike.groupBy({
+              by: ["postId"],
+              where: { postId: { in: postIds }, NOT: { ownerId: req.owner.id } },
+              _count: { ownerId: true },
+            }),
+            prisma.communityPostSave.groupBy({
+              by: ["postId"],
+              where: { postId: { in: postIds }, NOT: { ownerId: req.owner.id } },
+              _count: { ownerId: true },
+            }),
+            prisma.communityPostShare.groupBy({
+              by: ["postId"],
+              where: { postId: { in: postIds } },
+              _count: { ownerId: true },
+            }),
+            prisma.communityItemLike.groupBy({
+              by: ["bookmarkId"],
+              where: { bookmarkId: { in: itemIds }, NOT: { ownerId: req.owner.id } },
+              _count: { ownerId: true },
+            }),
+            prisma.communityItemSave.groupBy({
+              by: ["bookmarkId"],
+              where: { bookmarkId: { in: itemIds }, NOT: { ownerId: req.owner.id } },
+              _count: { ownerId: true },
+            }),
+            prisma.communityItemShare.groupBy({
+              by: ["bookmarkId"],
+              where: { bookmarkId: { in: itemIds } },
+              _count: { ownerId: true },
+            }),
+          ])
+        : [[], [], [], [], [], []];
     const likesByPost = Object.fromEntries(likeCounts.map((r) => [r.postId, r._count.ownerId]));
+    const savesByPost = Object.fromEntries(saveCounts.map((r) => [r.postId, r._count.ownerId]));
+    const sharesByPost = Object.fromEntries(shareCounts.map((r) => [r.postId, r._count.ownerId]));
+    const likesByItem = Object.fromEntries(itemLikeCounts.map((r) => [r.bookmarkId, r._count.ownerId]));
+    const savesByItem = Object.fromEntries(itemSaveCounts.map((r) => [r.bookmarkId, r._count.ownerId]));
+    const sharesByItem = Object.fromEntries(itemShareCounts.map((r) => [r.bookmarkId, r._count.ownerId]));
+    const withItemCounts = (bookmark) => ({
+      ...bookmark,
+      likes: likesByItem[bookmark.id] || 0,
+      saves: savesByItem[bookmark.id] || 0,
+      shares: sharesByItem[bookmark.id] || 0,
+    });
     res.json({
-      posts: collections.map(({ owner, publishedAt, ...collection }) => ({
+      posts: collections.map(({ owner, publishedAt, bookmarks, groups, ...collection }) => ({
         id: collection.id,
         user: publicAuthor(owner),
         postedAt: publishedAt,
         likes: likesByPost[collection.id] || 0,
-        collection,
+        saves: savesByPost[collection.id] || 0,
+        shares: sharesByPost[collection.id] || 0,
+        collection: {
+          ...collection,
+          bookmarks: bookmarks.map(withItemCounts),
+          groups: groups.map((group) => ({
+            ...group,
+            bookmarks: group.bookmarks.map(withItemCounts),
+          })),
+        },
       })),
     });
   });
@@ -285,6 +604,14 @@ export function installCommunity(app, prisma) {
     const comment = await prisma.communityComment.create({
       data: { postId, ownerId: req.owner.id, text },
       include: { owner: true },
+    });
+    const targetOwnerId = await resolveCollectionOwner(prisma, postId);
+    await creditRelevance(prisma, {
+      actingOwnerId: req.owner.id,
+      targetOwnerId,
+      bumpTarget: bumpCollectionRelevance,
+      targetId: postId,
+      weight: RELEVANCE_WEIGHT.comment,
     });
     res.status(201).json(asComment(comment));
   });

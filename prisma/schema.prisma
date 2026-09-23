@@ -22,6 +22,7 @@ model Owner {
   email String? @unique
   displayName String?
   avatar String @default("")
+  banner String @default("")
   passwordHash String?
   googleId String? @unique
   status AccountStatus @default(ACTIVE)
@@ -44,6 +45,11 @@ model Owner {
   communityBlocks CommunityBlock[]
   communityFollows CommunityFollow[]
   communityPostReports CommunityPostReport[]
+  communityItemShares CommunityItemShare[]
+  communityPostShares CommunityPostShare[]
+  bookmarkSaveMarks BookmarkSaveMark[]
+  userRelevance UserRelevance?
+  savedCollections SavedCollection[]
 }
 model Session {
   tokenHash String @id
@@ -100,18 +106,12 @@ model Collection {
   // posição na lista.
   order Int @default(0)
   createdAt DateTime @default(now())
-  // Marca a coleção reservada "Itens Salvos" (ver toggleSavedItem em
-  // server/index.mjs), criada sob demanda na primeira vez que o dono favorita
-  // um item (seu ou público de outro usuário) e apagada de volta quando fica
-  // vazia — no máximo uma por dono, garantido por um índice único PARCIAL que
-  // só existe na migration SQL (WHERE "isSavedItems" = true), já que o Prisma
-  // não expressa índice parcial no schema; @@unique aqui restringiria também
-  // as coleções normais, que podem ser várias por dono. O nome em si não é
-  // usado pra identificá-la
-  // (o dono pode renomear à vontade sem quebrar o vínculo).
-  isSavedItems Boolean @default(false)
   bookmarks Bookmark[]
   groups BookmarkGroup[]
+  // Quem "seguiu" esta coleção salvando-a (inteira ou só alguns links) na
+  // Comunidade — ver comentário de SavedCollection. Ausente em toda coleção
+  // que nunca foi salva por ninguém (a imensa maioria).
+  savedBy SavedCollection[]
   @@index([ownerId])
 }
 model BookmarkGroup {
@@ -132,9 +132,27 @@ model BookmarkGroup {
   // "section": divisória com o nome do grupo e os favoritos visíveis direto —
   // criado ao importar uma pasta aninhada. Fixo desde a criação (não editável).
   display String @default("tile")
+  // Visibilidade do grupo (seção OU agrupamento) dentro da própria coleção —
+  // só tem efeito quando collection.isPublic também é true: uma coleção
+  // pública pode conter seções/agrupamentos privados, que ficam de fora do
+  // perfil público e do feed da Comunidade mesmo com a coleção publicada
+  // (ver GET /api/public/:id e GET /api/community/feed em server/index.mjs e
+  // server/community.mjs, que agora filtram groups por isPublic). Uma
+  // coleção privada já esconde tudo por conta própria, então esse campo só
+  // importa de fato dentro de coleções públicas. Um favorito sem grupo
+  // continua herdando só o isPublic da coleção, como antes.
+  isPublic Boolean @default(true)
+  // Só pra "tile": a seção onde o agrupamento vive (null = direto na
+  // coleção). Agrupar dois favoritos de dentro de uma seção mantém o
+  // agrupamento nela, em vez de jogá-lo pra coleção. SetNull: excluir a seção
+  // devolve o agrupamento pra coleção, igual aos favoritos soltos dela.
+  parentId String?
+  parent BookmarkGroup? @relation("GroupNesting", fields: [parentId], references: [id], onDelete: SetNull)
+  children BookmarkGroup[] @relation("GroupNesting")
   createdAt DateTime @default(now())
   bookmarks Bookmark[]
   @@index([collectionId])
+  @@index([parentId])
 }
 // Sem campo isPublic próprio de propósito: um favorito não tem visibilidade
 // independente da coleção, sempre herda o isPublic dela (ver PATCH
@@ -164,16 +182,73 @@ model Bookmark {
   linkStatus String @default("unknown")
   linkCheckedAt DateTime?
   createdAt DateTime @default(now())
-  // Preenchido só nas cópias dentro da coleção "Itens Salvos" (ver
-  // Collection.isSavedItems): id do favorito original que foi favoritado (do
-  // próprio dono ou público de outro usuário). Sem chave estrangeira de
-  // propósito — o original pode já ter sido apagado, ou nem existir como
-  // linha de verdade (ex: um favorito de publicação fictícia da Comunidade,
-  // ver communityMock.ts), e mesmo assim a cópia salva continua valendo.
-  savedFromId String?
-  @@unique([collectionId, savedFromId])
+  // Quem salvou este favorito específico de outro dono na aba "Itens Salvos"
+  // (ver comentário de SavedCollectionItem) — cascade: some daqui se o
+  // próprio favorito for apagado.
+  savedInItems SavedCollectionItem[]
   @@index([collectionId])
   @@index([groupId])
+}
+// Marca "favoritado" num favorito que já é do PRÓPRIO dono — sem isso,
+// favoritar o próprio link cairia no caminho de SavedCollection/
+// SavedCollectionItem (ver abaixo) em server/index.mjs, que só faz sentido
+// pra link de OUTRO dono. bookmarkId sem chave estrangeira: o favorito pode
+// já ter sido apagado, ou nem existir como linha de verdade (ex: publicação
+// fictícia da Comunidade, ver communityMock.ts).
+model BookmarkSaveMark {
+  ownerId String
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  bookmarkId String
+  createdAt DateTime @default(now())
+  @@id([ownerId, bookmarkId])
+  @@index([bookmarkId])
+}
+// Uma coleção ALHEIA que o dono passou a "seguir" ao salvá-la na Comunidade —
+// tanto a coleção inteira (botão "Salvar" da publicação, ver POST
+// /api/community/posts/:postId/save em server/community.mjs) quanto só um
+// link específico dela (coração de um item no feed, ver POST
+// /api/saved-items/:sourceId em server/index.mjs). Ao contrário do
+// comportamento antigo (Collection.savedFromCollectionId/Bookmark.savedFromId,
+// que copiavam os dados pro dono editar como se fossem seus), isto é só uma
+// referência: a aba "Itens Salvos" sempre lê os dados AO VIVO da coleção
+// original (nome, descrição, favoritos atuais), e quem salvou não pode
+// editá-la — só o dono da coleção original pode. Apagar a coleção original
+// (onDelete: Cascade) remove a referência salva junto, já que não há mais
+// nada pra mostrar.
+model SavedCollection {
+  id String @id @default(uuid())
+  ownerId String
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  collectionId String
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  // true quando o dono salvou a coleção INTEIRA: todo favorito ATUAL da
+  // coleção original aparece em "Itens Salvos" ao vivo, mesmo os adicionados
+  // depois de salvar. false quando só favoritos individuais foram salvos
+  // (coração de um link específico no feed) — nesse caso só os marcados em
+  // SavedCollectionItem aparecem, mesmo que a coleção original tenha outros
+  // links não salvos. Salvar a coleção inteira depois de já ter salvo itens
+  // avulsos dela promove o registro pra full = true; desfazer o "Salvar" da
+  // publicação inteira volta pra false (sem apagar o registro) quando ainda
+  // sobra algum item salvo avulso.
+  full Boolean @default(false)
+  createdAt DateTime @default(now())
+  items SavedCollectionItem[]
+  @@unique([ownerId, collectionId])
+  @@index([collectionId])
+}
+// Um link específico salvo dentro de uma SavedCollection parcial (full =
+// false) — ignorado quando full = true, já que a coleção inteira aparece
+// completa ao vivo nesse caso. onDelete: Cascade nos dois lados: some daqui
+// se o dono desfizer o "Salvar" desse link OU se o favorito original for
+// apagado pelo dono dele.
+model SavedCollectionItem {
+  savedCollectionId String
+  savedCollection SavedCollection @relation(fields: [savedCollectionId], references: [id], onDelete: Cascade)
+  bookmarkId String
+  bookmark Bookmark @relation(fields: [bookmarkId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  @@id([savedCollectionId, bookmarkId])
+  @@index([bookmarkId])
 }
 // Interações do dono com o feed da aba Comunidade (ver server/community.mjs).
 // As publicações em si ainda são fixas no frontend (communityMock.ts, sem
@@ -213,6 +288,30 @@ model CommunityItemSave {
   createdAt DateTime @default(now())
   @@id([ownerId, bookmarkId])
   @@index([bookmarkId])
+}
+// Compartilhar (botão de copiar link) de um favorito específico do feed —
+// diferente de curtir/salvar, não é um estado ligado/desligado (não existe
+// "descompartilhar"): registra no máximo uma vez por dono, só pra contar
+// quantas pessoas distintas compartilharam (ver GET /api/community/feed) e
+// alimentar a relevância do link uma única vez por dono (ver
+// server/relevance.mjs). Cliques repetidos do mesmo dono continuam copiando
+// o link normalmente, só não contam de novo.
+model CommunityItemShare {
+  ownerId String
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  bookmarkId String
+  createdAt DateTime @default(now())
+  @@id([ownerId, bookmarkId])
+  @@index([bookmarkId])
+}
+// Mesma ideia de CommunityItemShare, mas pra publicação (coleção) inteira.
+model CommunityPostShare {
+  ownerId String
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  postId String
+  createdAt DateTime @default(now())
+  @@id([ownerId, postId])
+  @@index([postId])
 }
 // Comentários de verdade escritos por donos reais no feed — os comentários
 // dos usuários fictícios (ver communityMock.ts) continuam fixos no frontend;
@@ -292,4 +391,43 @@ model CommunityPostReport {
   createdAt DateTime @default(now())
   @@id([ownerId, postId])
   @@index([postId])
+}
+// Relevância global de um link — pontuação interna, nunca exposta em nenhuma
+// resposta da API (nem devolvida pro dono do link), usada só pelo próprio
+// sistema pra decidir o que recomendar/destacar (ex: futura aba Descobrir).
+// Tabela separada em vez de coluna em Bookmark de propósito: assim nenhuma
+// consulta existente de favoritos (coleções, perfil público, feed da
+// Comunidade) precisa de `select` explícito pra não vazar o campo — a
+// pontuação simplesmente não está lá. bookmarkId sem chave estrangeira pelo
+// mesmo motivo de CommunityItemLike/Save acima: aponta pro id do favorito
+// ORIGINAL (nunca de uma cópia dentro de "Itens Salvos", que não é pública e
+// portanto não pode ser copiada de novo), que pode já ter sido apagado.
+model LinkRelevance {
+  bookmarkId String @id
+  score Int @default(0)
+  updatedAt DateTime @updatedAt
+}
+// Mesma ideia de LinkRelevance, mas pra uma coleção (publicação) inteira —
+// tabela própria pelo mesmo motivo: nenhuma consulta de coleção precisa de
+// select explícito pra não vazar a pontuação, ela simplesmente não está lá.
+// Alimentada por curtir/salvar/comentar/compartilhar a PUBLICAÇÃO (ver
+// server/community.mjs), nunca pelo próprio dono da coleção.
+model CollectionRelevance {
+  collectionId String @id
+  score Int @default(0)
+  updatedAt DateTime @updatedAt
+}
+// Relevância do PRÓPRIO USUÁRIO (dono) — cresce quando ALGUÉM MAIS
+// comenta, curte, salva ou compartilha algum link/coleção dele, ou passa a
+// segui-lo; nunca pelas próprias interações do dono em conteúdo alheio (ver
+// bumpUserRelevance em server/relevance.mjs, sempre chamada com o dono do
+// conteúdo afetado, nunca com quem clicou). ownerId aqui É chave estrangeira
+// (diferente de bookmarkId/postId acima): um "dono" sempre corresponde a uma
+// conta de verdade, então não existe o caso de apontar pra alguém que nunca
+// existiu.
+model UserRelevance {
+  ownerId String @id
+  owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  score Int @default(0)
+  updatedAt DateTime @updatedAt
 }

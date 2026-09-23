@@ -30,6 +30,7 @@ const publicUser = (owner) => ({
   username: owner.username || "",
   email: owner.email || "",
   avatar: owner.avatar || "",
+  banner: owner.banner || "",
   hasPassword: Boolean(owner.passwordHash),
   googleLinked: Boolean(owner.googleId),
 });
@@ -75,6 +76,21 @@ export async function isPasswordBreached(password) {
     return false;
   }
 }
+// Mesma consulta de sessão usada pelo middleware "app.use("/api", ...)" logo
+// abaixo (o que preenche req.owner pra toda rota registrada DEPOIS dele) —
+// extraída pra poder ser chamada também por uma rota registrada ANTES dele,
+// como GET /api/public/:id (server/index.mjs): ela precisa saber quem é o
+// visitante (pra excluir a curtida/salvamento dele mesmo da contagem de cada
+// favorito), mas sem entrar atrás do guard de "exige sessão" que o próprio
+// installAuth registra no fim (ver o último "app.use("/api", ...)" desta
+// função) — colocá-la depois de installAuth bloquearia visitante anônimo.
+export async function resolveOwner(req, prisma) {
+  const token = cookieToken(req);
+  if (!token) return null;
+  const session = await prisma.session.findUnique({ where: { tokenHash: hash(token) }, include: { owner: true } });
+  if (session && session.expiresAt > new Date() && session.owner.status === "ACTIVE") return session.owner;
+  return null;
+}
 export function installAuth(app, prisma) {
   const google = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
   const attempts = new Map();
@@ -119,11 +135,8 @@ export function installAuth(app, prisma) {
     }
   }
   app.use("/api", async (req, _res, next) => {
-    const token = cookieToken(req);
-    if (token) {
-      const session = await prisma.session.findUnique({ where: { tokenHash: hash(token) }, include: { owner: true } });
-      if (session && session.expiresAt > new Date() && session.owner.status === "ACTIVE") req.owner = session.owner;
-    }
+    const owner = await resolveOwner(req, prisma);
+    if (owner) req.owner = owner;
     next();
   });
   app.get("/api/auth/me", (req, res) => res.json({ user: req.owner ? publicUser(req.owner) : null, googleClientId: process.env.GOOGLE_CLIENT_ID || "" }));
@@ -393,10 +406,28 @@ export function installAuth(app, prisma) {
   });
   app.patch("/api/auth/me", async (req, res) => {
     if (!req.owner) return res.status(401).json({ error: "Entre na sua conta para continuar." });
-    const displayName = typeof req.body.displayName === "string" ? req.body.displayName.trim() : "";
-    if (!displayName || displayName.length > 60) return res.status(400).json({ error: "O nome deve ter entre 1 e 60 caracteres." });
-    const owner = await prisma.owner.update({ where: { id: req.owner.id }, data: { displayName } });
-    res.json({ user: publicUser(owner) });
+    // Cada seção da página "Conta" manda só o próprio campo: "Nome de
+    // exibição" (displayName, o que aparece nas publicações) ou "Usuário"
+    // (username — único, identifica o perfil público e também serve pra entrar).
+    const data = {};
+    if (req.body.displayName !== undefined) {
+      const displayName = typeof req.body.displayName === "string" ? req.body.displayName.trim() : "";
+      if (!displayName || displayName.length > 60) return res.status(400).json({ error: "O nome de exibição deve ter entre 1 e 60 caracteres." });
+      data.displayName = displayName;
+    }
+    if (req.body.username !== undefined) {
+      const username = typeof req.body.username === "string" ? req.body.username.trim().toLowerCase() : "";
+      if (!/^[a-z0-9_.-]{3,32}$/.test(username)) return res.status(400).json({ error: "Use um usuário de 3 a 32 caracteres: letras, números, ponto, hífen ou sublinhado." });
+      data.username = username;
+    }
+    if (!Object.keys(data).length) return res.status(400).json({ error: "Nada para atualizar." });
+    try {
+      const owner = await prisma.owner.update({ where: { id: req.owner.id }, data });
+      res.json({ user: publicUser(owner) });
+    } catch (error) {
+      if (error?.code === "P2002") return res.status(409).json({ error: "Este usuário já está em uso." });
+      throw error;
+    }
   });
   app.post("/api/auth/avatar", async (req, res) => {
     if (!req.owner) return res.status(401).json({ error: "Entre na sua conta para continuar." });
@@ -408,6 +439,27 @@ export function installAuth(app, prisma) {
       if (typeof req.body.avatar !== "string") throw new Error();
       const { favicon } = await resolveImage(req.body.avatar);
       const owner = await prisma.owner.update({ where: { id: req.owner.id }, data: { avatar: favicon } });
+      res.json({ user: publicUser(owner) });
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Não foi possível processar a imagem." });
+    }
+  });
+  app.post("/api/auth/banner", async (req, res) => {
+    if (!req.owner) return res.status(401).json({ error: "Entre na sua conta para continuar." });
+    try {
+      if (req.body.banner === "") {
+        const owner = await prisma.owner.update({ where: { id: req.owner.id }, data: { banner: "" } });
+        return res.json({ user: publicUser(owner) });
+      }
+      if (typeof req.body.banner !== "string") throw new Error();
+      // Capa é bem mais larga que quadrada — dimensões próprias (não os 256x256
+      // do avatar), na MESMA proporção 1100x180 de ".public-profile-banner"
+      // (styles.css) e de BANNER_ASPECT (App.tsx), só que em resolução maior
+      // (x1.5) — usar uma proporção diferente da caixa onde a capa realmente
+      // aparece faz a imagem ser recortada de novo na exibição (object-fit:cover),
+      // deslocando o enquadramento escolhido no slider de reposicionamento.
+      const { favicon } = await resolveImage(req.body.banner, { crop: "cover", width: 1650, height: 270 });
+      const owner = await prisma.owner.update({ where: { id: req.owner.id }, data: { banner: favicon } });
       res.json({ user: publicUser(owner) });
     } catch (error) {
       res.status(400).json({ error: error.message || "Não foi possível processar a imagem." });

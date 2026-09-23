@@ -305,10 +305,12 @@ async function init() {
         collectionId: els.collectionSelect.value,
         groupId: els.sectionSelect.value || null,
       });
+      // Fecha o popup sozinho depois de salvar — só o tempo de a confirmação
+      // aparecer (o botão continua desabilitado pra não salvar duas vezes).
       setFeedback("Salvo no Linkable!", "success");
+      setTimeout(() => window.close(), 700);
     } catch (error) {
       setFeedback(error.message, "error");
-    } finally {
       els.saveNow.disabled = false;
     }
   };

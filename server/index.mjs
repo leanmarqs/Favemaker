@@ -3,13 +3,14 @@ import express from "express";
 import helmet from "helmet";
 import pkg from "@prisma/client";
 const { PrismaClient } = pkg;
-import { installAuth } from "./auth.mjs";
-import { installCommunity } from "./community.mjs";
+import { installAuth, resolveOwner } from "./auth.mjs";
+import { installCommunity, publicGroupWhere } from "./community.mjs";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { metadata, normalizeUrl, resolveImage } from "./metadata.mjs";
 import { parseBookmarksHtml, buildBookmarksHtml } from "./bookmarksFile.mjs";
 import { scheduleLinkChecks } from "./linkCheck.mjs";
+import { bumpRelevance, creditRelevance, RELEVANCE_WEIGHT } from "./relevance.mjs";
 
 const prisma = new PrismaClient();
 // Índice funcional (GIN) pra buscar favoritos por nome/descrição/URL sem
@@ -116,11 +117,20 @@ app.use("/api", (req, res, next) => {
 // que não têm Owner por trás; o frontend usa nome/usuário/cor recebidos na
 // própria URL como fallback de exibição nesse caso (ver publicProfileHref
 // em Community.tsx).
+// Fica ANTES de installAuth de propósito (ver o comentário dela mais abaixo:
+// "Public profiles stay accessible; all personal routes below require a
+// session" — installAuth termina registrando um guard que EXIGE sessão pra
+// qualquer rota "/api" seguinte). resolveOwner (exportada por auth.mjs) faz a
+// mesma consulta de sessão do middleware que installAuth registraria, só que
+// sem esse guard: sabe quem é o visitante quando ele está logado (pra
+// excluir a curtida/salvamento DELE MESMO da contagem de cada favorito,
+// mesmo motivo do +1 otimista em GET /api/community/feed,
+// server/community.mjs), mas continua funcionando pra visitante anônimo.
 app.get("/api/public/:id", async (req, res) => {
-  const [owner, collections, followerCount] = await Promise.all([
+  const [owner, collections, followerCount, followingCount, viewer] = await Promise.all([
     prisma.owner.findUnique({
       where: { id: req.params.id },
-      select: { username: true, displayName: true, avatar: true, createdAt: true },
+      select: { username: true, displayName: true, avatar: true, banner: true, createdAt: true },
     }),
     prisma.collection.findMany({
       where: { ownerId: req.params.id, isPublic: true },
@@ -131,15 +141,19 @@ app.get("/api/public/:id", async (req, res) => {
       // ordem de exibição. "order" é a posição escolhida (arrastar/"Ordenar
       // A-Z"); createdAt é só o desempate pras que nunca foram reordenadas.
       orderBy: [{ order: "asc" }, { createdAt: "asc" }],
-      // Sem "where: isPublic" nos favoritos: um favorito não tem visibilidade
-      // própria (ver comentário no schema.prisma) — a coleção já filtrada
-      // acima como pública cobre todos os favoritos dela.
+      // Sem "where: isPublic" nos favoritos soltos: um favorito sem grupo não
+      // tem visibilidade própria (ver comentário no schema.prisma) — a
+      // coleção já filtrada acima como pública cobre todos eles. Os GRUPOS
+      // (seções e agrupamentos) já têm isPublic próprio (ver comentário em
+      // BookmarkGroup) — "where: isPublic" neles deixa uma coleção pública
+      // esconder seções/agrupamentos privados (e os favoritos dentro deles).
       include: {
         bookmarks: {
           where: { groupId: null },
           orderBy: [{ order: "asc" }, { createdAt: "asc" }],
         },
         groups: {
+          where: publicGroupWhere,
           include: {
             bookmarks: {
               orderBy: [{ order: "asc" }, { createdAt: "asc" }],
@@ -149,16 +163,59 @@ app.get("/api/public/:id", async (req, res) => {
       },
     }),
     prisma.communityFollow.count({ where: { authorId: req.params.id } }),
+    prisma.communityFollow.count({ where: { ownerId: req.params.id } }),
+    resolveOwner(req, prisma),
   ]);
+  // Mesmo padrão de GET /api/community/feed: contagem de curtida/favoritado/
+  // compartilhamento por favorito, pra mostrar nos ícones de cada link da
+  // página de perfil público (antes só existia no feed da Comunidade).
+  const itemIds = collections.flatMap((c) => [
+    ...c.bookmarks.map((b) => b.id),
+    ...c.groups.flatMap((g) => g.bookmarks.map((b) => b.id)),
+  ]);
+  const [itemLikeCounts, itemSaveCounts, itemShareCounts] = itemIds.length
+    ? await Promise.all([
+        prisma.communityItemLike.groupBy({
+          by: ["bookmarkId"],
+          where: { bookmarkId: { in: itemIds }, NOT: { ownerId: viewer?.id || "" } },
+          _count: { ownerId: true },
+        }),
+        prisma.communityItemSave.groupBy({
+          by: ["bookmarkId"],
+          where: { bookmarkId: { in: itemIds }, NOT: { ownerId: viewer?.id || "" } },
+          _count: { ownerId: true },
+        }),
+        prisma.communityItemShare.groupBy({
+          by: ["bookmarkId"],
+          where: { bookmarkId: { in: itemIds } },
+          _count: { ownerId: true },
+        }),
+      ])
+    : [[], [], []];
+  const likesByItem = Object.fromEntries(itemLikeCounts.map((r) => [r.bookmarkId, r._count.ownerId]));
+  const savesByItem = Object.fromEntries(itemSaveCounts.map((r) => [r.bookmarkId, r._count.ownerId]));
+  const sharesByItem = Object.fromEntries(itemShareCounts.map((r) => [r.bookmarkId, r._count.ownerId]));
+  const withItemCounts = (bookmark) => ({
+    ...bookmark,
+    likes: likesByItem[bookmark.id] || 0,
+    saves: savesByItem[bookmark.id] || 0,
+    shares: sharesByItem[bookmark.id] || 0,
+  });
   res.json({
-    collections,
+    collections: collections.map(({ bookmarks, groups, ...collection }) => ({
+      ...collection,
+      bookmarks: bookmarks.map(withItemCounts),
+      groups: groups.map((g) => ({ ...g, bookmarks: g.bookmarks.map(withItemCounts) })),
+    })),
     profile: owner
       ? {
           name: owner.displayName || owner.username || "Usuário",
           username: owner.username || "",
           avatar: owner.avatar || "",
+          banner: owner.banner || "",
           memberSince: owner.createdAt,
           followerCount,
+          followingCount,
         }
       : null,
   });
@@ -334,6 +391,10 @@ function groupFields(body) {
     description: typeof body.description === "string" ? body.description : "",
     showName: Boolean(body.showName),
     shape: groupShape(body),
+    // Ausente (ex: formulário antigo que ainda não manda esse campo) mantém
+    // o grupo público — visível assim que a coleção em volta for pública,
+    // que já era o único comportamento possível antes desse campo existir.
+    isPublic: body.isPublic === false ? false : true,
   };
 }
 app.post("/api/collections", async (req, res) => {
@@ -443,111 +504,219 @@ app.post("/api/bookmarks", async (req, res) =>
     .status(201)
     .json(await prisma.bookmark.create({ data: await bookmarkFields(req) })),
 );
-// Busca (ou cria, se ainda não existir) a coleção reservada "Itens Salvos" do
-// dono logado — usada tanto pra criar quanto pra ler as cópias já salvas (ver
-// GET/POST /api/saved-items abaixo). Corrida entre duas criações simultâneas
-// (ex: duplo clique bem rápido) é resolvida pelo índice único parcial
-// Collection_ownerId_isSavedItems_unique (ver schema.prisma): a segunda
-// tentativa de criar simplesmente relê a que a primeira acabou de criar, em
-// vez de falhar pro usuário.
-async function savedItemsCollection(ownerId) {
-  const existing = await prisma.collection.findFirst({
-    where: { ownerId, isSavedItems: true },
-  });
-  if (existing) return existing;
-  try {
-    return await prisma.collection.create({
-      data: { ownerId, name: "Itens Salvos", isSavedItems: true },
-    });
-  } catch (e) {
-    if (e.code === "P2002")
-      return prisma.collection.findFirstOrThrow({
-        where: { ownerId, isSavedItems: true },
-      });
-    throw e;
-  }
-}
-function savedItemFields(body) {
-  if (typeof body.name !== "string" || !body.name.trim() || body.name.length > 120)
-    throw Object.assign(new Error("Nome do favorito inválido."), {
-      status: 400,
-    });
-  if (typeof body.url !== "string" || !body.url.trim() || body.url.length > 2000)
-    throw Object.assign(new Error("URL do favorito inválida."), {
-      status: 400,
-    });
-  return {
-    name: body.name.trim(),
-    url: body.url.trim(),
-    description:
-      typeof body.description === "string" ? body.description.slice(0, 2000) : "",
-    favicon: typeof body.favicon === "string" ? body.favicon : "",
-    color: /^#[0-9a-f]{6}$/i.test(body.color) ? body.color : "#8b5cf6",
-  };
-}
-// Ids (savedFromId) já favoritados pelo dono logado — usado pra acender o
-// coração no card de prévia de cada favicon (ver App.tsx), tanto em "Suas
-// coleções" quanto no perfil público de outro dono ou num favicon da
-// Comunidade, já que o "Itens Salvos" é sempre do visitante, não de quem está
-// sendo visitado.
+// Ids já favoritados pelo dono logado — usado pra acender o coração no card
+// de prévia de cada favicon (ver App.tsx), tanto em "Suas coleções" quanto no
+// perfil público de outro dono ou num favicon da Comunidade. Combina três
+// origens: favoritos individuais salvos de coleção alheia (SavedCollection
+// parcial, ver GET /api/saved-collections abaixo), TODOS os favoritos atuais
+// de uma coleção alheia salva INTEIRA (SavedCollection.full — o coração
+// acende pra qualquer item dela, mesmo um adicionado depois de salvar) e
+// marcas leves em BookmarkSaveMark (favoritos do PRÓPRIO dono, que nunca
+// ganham referência — ver POST abaixo) — o cliente não precisa saber a
+// diferença, só se o coração acende ou não.
 app.get("/api/saved-items", async (req, res) => {
-  const saved = await prisma.collection.findFirst({
-    where: { ownerId: req.owner.id, isSavedItems: true },
-    include: { bookmarks: { select: { savedFromId: true } } },
-  });
-  res.json({
-    savedFromIds: (saved?.bookmarks || [])
-      .map((b) => b.savedFromId)
-      .filter((id) => id !== null),
-  });
+  const [savedCollections, marks] = await Promise.all([
+    prisma.savedCollection.findMany({
+      where: { ownerId: req.owner.id },
+      include: {
+        items: { select: { bookmarkId: true } },
+        collection: { select: { bookmarks: { select: { id: true } } } },
+      },
+    }),
+    prisma.bookmarkSaveMark.findMany({
+      where: { ownerId: req.owner.id },
+      select: { bookmarkId: true },
+    }),
+  ]);
+  const savedFromIds = [];
+  for (const saved of savedCollections) {
+    if (saved.full) savedFromIds.push(...saved.collection.bookmarks.map((b) => b.id));
+    else savedFromIds.push(...saved.items.map((i) => i.bookmarkId));
+  }
+  savedFromIds.push(...marks.map((m) => m.bookmarkId));
+  res.json({ savedFromIds });
 });
 // Alterna favoritar um item específico (o coração de cada favicon, não o
-// "Salvar" da coleção/publicação inteira) — cria ou remove uma CÓPIA dele
-// dentro de "Itens Salvos", nunca edita o original. Funciona tanto pro
-// próprio favorito quanto pro público de outro dono ou de uma publicação da
-// Comunidade, por isso fica fora do middleware de posse de
-// /api/bookmarks/:id (o "original" pode nem pertencer a este dono, ou nem
-// ter linha própria no banco — ver comentário de Bookmark.savedFromId): o
-// cliente manda os campos do favorito que já tem em mãos, sem o servidor
-// precisar localizá-lo em lugar nenhum.
+// "Salvar" da coleção/publicação inteira). Dois caminhos bem diferentes:
+// - link ALHEIO: liga/desliga uma REFERÊNCIA (SavedCollection +
+//   SavedCollectionItem) à coleção original dele, nunca uma cópia — o dono
+//   passa a "seguir" aquele link, sempre vendo o dado ao vivo (ver GET
+//   /api/saved-collections), sem poder editá-lo. Favorito fictício da
+//   Comunidade (sem linha de Bookmark de verdade, ver communityMock.ts): não
+//   há nada de verdade pra referenciar, então só confirma a interação sem
+//   persistir nada.
+// - link do PRÓPRIO dono: não cria referência nenhuma (favoritar o próprio
+//   link não faz sentido) — só liga/desliga uma marca leve em
+//   BookmarkSaveMark, pra ele aparecer na filtragem de itens salvos sem
+//   ganhar coleção nova nenhuma.
+// Fica fora do middleware de posse de /api/bookmarks/:id porque o "original"
+// pode nem pertencer a este dono.
 app.post("/api/saved-items/:sourceId", async (req, res) => {
   const sourceId = req.params.sourceId;
   if (typeof sourceId !== "string" || !sourceId.trim() || sourceId.length > 80)
     throw Object.assign(new Error("Favorito inválido."), { status: 400 });
-  const existingCollection = await prisma.collection.findFirst({
-    where: { ownerId: req.owner.id, isSavedItems: true },
+  const source = await prisma.bookmark.findUnique({
+    where: { id: sourceId },
+    select: { collectionId: true, collection: { select: { ownerId: true } } },
   });
-  if (existingCollection) {
-    const existingCopy = await prisma.bookmark.findFirst({
-      where: { collectionId: existingCollection.id, savedFromId: sourceId },
-    });
-    if (existingCopy) {
-      await prisma.bookmark.delete({ where: { id: existingCopy.id } });
-      const remaining = await prisma.bookmark.count({
-        where: { collectionId: existingCollection.id },
-      });
-      // Some da lista "Suas coleções" assim que fica vazia — ela só existe
-      // enquanto tiver pelo menos um favorito salvo; a próxima vez que o dono
-      // favoritar algo, savedItemsCollection() recria do zero.
-      if (remaining === 0)
-        await prisma.collection.delete({ where: { id: existingCollection.id } });
+  const sourceOwnerId = source?.collection.ownerId ?? null;
+  if (sourceOwnerId === req.owner.id) {
+    const where = { ownerId_bookmarkId: { ownerId: req.owner.id, bookmarkId: sourceId } };
+    const existingMark = await prisma.bookmarkSaveMark.findUnique({ where });
+    if (existingMark) {
+      await prisma.bookmarkSaveMark.delete({ where });
       return res.json({ active: false });
     }
+    await prisma.bookmarkSaveMark.create({ data: { ownerId: req.owner.id, bookmarkId: sourceId } });
+    // Sem bump de relevância aqui: é o próprio dono favoritando o próprio
+    // link, o exato caso que a relevância nunca deve contar (ver
+    // server/relevance.mjs).
+    return res.status(201).json({ active: true });
   }
-  const data = savedItemFields(req.body);
-  const targetCollection =
-    existingCollection || (await savedItemsCollection(req.owner.id));
+  if (!source) return res.status(201).json({ active: true });
+  const existingSaved = await prisma.savedCollection.findUnique({
+    where: {
+      ownerId_collectionId: { ownerId: req.owner.id, collectionId: source.collectionId },
+    },
+    include: { items: { where: { bookmarkId: sourceId } } },
+  });
+  // Coleção inteira já salva: o coração deste item já acende por causa dela
+  // (ver GET /api/saved-items acima) — desfazer só um item aqui não faz
+  // sentido, precisa desfazer o "Salvar" da publicação inteira.
+  if (existingSaved?.full) return res.json({ active: true });
+  if (existingSaved?.items.length) {
+    await prisma.savedCollectionItem.delete({
+      where: {
+        savedCollectionId_bookmarkId: {
+          savedCollectionId: existingSaved.id,
+          bookmarkId: sourceId,
+        },
+      },
+    });
+    const remaining = await prisma.savedCollectionItem.count({
+      where: { savedCollectionId: existingSaved.id },
+    });
+    // Some da aba "Itens Salvos" assim que a referência fica sem nenhum item
+    // salvo — ela só existe enquanto tiver pelo menos um.
+    if (remaining === 0)
+      await prisma.savedCollection.delete({ where: { id: existingSaved.id } });
+    await creditRelevance(prisma, {
+      actingOwnerId: req.owner.id,
+      targetOwnerId: sourceOwnerId,
+      bumpTarget: bumpRelevance,
+      targetId: sourceId,
+      weight: -RELEVANCE_WEIGHT.copy,
+    });
+    return res.json({ active: false });
+  }
+  const savedCollection =
+    existingSaved ||
+    (await prisma.savedCollection.create({
+      data: { ownerId: req.owner.id, collectionId: source.collectionId, full: false },
+    }));
+  let created = true;
   try {
-    await prisma.bookmark.create({
-      data: { ...data, collectionId: targetCollection.id, savedFromId: sourceId },
+    await prisma.savedCollectionItem.create({
+      data: { savedCollectionId: savedCollection.id, bookmarkId: sourceId },
     });
   } catch (e) {
     // Duplo clique bem rápido pode mandar dois POSTs de "salvar" antes do
-    // primeiro terminar — o índice único (collectionId, savedFromId) barra a
-    // segunda cópia; trata como sucesso (já está salvo) em vez de erro.
+    // primeiro terminar — o índice único (savedCollectionId, bookmarkId)
+    // barra a segunda referência; trata como sucesso (já está salvo) em vez
+    // de erro. Não conta relevância de novo nesse caso: o item em si já
+    // rendeu seus pontos na primeira requisição que de fato criou a linha.
     if (e.code !== "P2002") throw e;
+    created = false;
   }
+  if (created)
+    await creditRelevance(prisma, {
+      actingOwnerId: req.owner.id,
+      targetOwnerId: sourceOwnerId,
+      bumpTarget: bumpRelevance,
+      targetId: sourceId,
+      weight: RELEVANCE_WEIGHT.copy,
+    });
   res.status(201).json({ active: true });
+});
+// Lista as coleções alheias que o dono logado "segue" (aba "Itens Salvos",
+// ver PosterRow/CollectionRow em App.tsx) — sempre lidas AO VIVO da coleção
+// original (nome, descrição, favoritos atuais), nunca de uma cópia, então
+// qualquer edição de quem criou aparece aqui sem esforço nenhum. Só coleções
+// ainda públicas entram (o dono original pode ter tornado privada depois de
+// salva, e nesse caso ela simplesmente some daqui, mesma regra de
+// GET /api/public/:id). Quando full=false, filtra bookmarks/grupos pra só os
+// itens individualmente salvos (SavedCollectionItem) aparecerem, mesmo que a
+// coleção original tenha outros links não salvos por este dono.
+app.get("/api/saved-collections", async (req, res) => {
+  const savedCollections = await prisma.savedCollection.findMany({
+    where: { ownerId: req.owner.id, collection: { isPublic: true } },
+    orderBy: { createdAt: "desc" },
+    include: {
+      items: { select: { bookmarkId: true } },
+      collection: {
+        include: {
+          owner: { select: { id: true, username: true, displayName: true } },
+          groups: {
+            where: publicGroupWhere,
+            orderBy: { createdAt: "asc" },
+            include: { bookmarks: { orderBy: [{ order: "asc" }, { createdAt: "asc" }] } },
+          },
+          bookmarks: {
+            where: { groupId: null },
+            orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+          },
+        },
+      },
+    },
+  });
+  const collections = savedCollections
+    .map((saved) => {
+      const allowedIds = saved.full ? null : new Set(saved.items.map((i) => i.bookmarkId));
+      const filterBookmarks = (bookmarks) =>
+        allowedIds ? bookmarks.filter((b) => allowedIds.has(b.id)) : bookmarks;
+      const groups = saved.collection.groups
+        .map((group) => ({ ...group, bookmarks: filterBookmarks(group.bookmarks) }))
+        .filter((group) => saved.full || group.bookmarks.length);
+      const bookmarks = filterBookmarks(saved.collection.bookmarks);
+      return {
+        id: saved.collection.id,
+        name: saved.collection.name,
+        description: saved.collection.description,
+        color: saved.collection.color,
+        isPublic: saved.collection.isPublic,
+        shape: saved.collection.shape,
+        behavior: saved.collection.behavior,
+        bookmarks,
+        groups,
+        savedFromAuthorId: saved.collection.owner.id,
+        savedFromAuthorName:
+          saved.collection.owner.displayName || saved.collection.owner.username || "Usuário",
+        // Só usado pro filter abaixo, nunca enviado ao cliente: uma coleção
+        // salva por completo continua aparecendo mesmo sem nenhum item (ela
+        // ainda existe, só está vazia agora), diferente de uma referência
+        // parcial vazia, que já teria sido apagada em POST /api/saved-items.
+        full: saved.full,
+      };
+    })
+    .filter((c) => c.full || c.bookmarks.length || c.groups.some((g) => g.bookmarks.length))
+    .map(({ full, ...c }) => c);
+  res.json({ collections, ownerId: req.owner.id });
+});
+// Desfaz o "Salvar" de uma coleção alheia por completo (inteira ou parcial) —
+// diferente do coração de um item específico (POST /api/saved-items/:sourceId),
+// que só desfaz um link por vez quando a referência é parcial. Usado pelo
+// botão "Remover dos salvos" da aba "Itens Salvos" em App.tsx. Também desliga
+// o CommunityPostSave (ver server/community.mjs) da mesma publicação, senão o
+// botão "Salvar" dela no feed continuaria mostrando "salvo" mesmo depois da
+// referência ter sumido daqui.
+app.delete("/api/saved-collections/:collectionId", async (req, res) => {
+  const { id: ownerId } = req.owner;
+  const { collectionId } = req.params;
+  await Promise.all([
+    prisma.savedCollection.deleteMany({ where: { ownerId, collectionId } }),
+    prisma.communityPostSave.deleteMany({ where: { ownerId, postId: collectionId } }),
+  ]);
+  res.json({ ok: true });
 });
 // Reordena (e opcionalmente move de grupo) uma lista inteira de favoritos de
 // uma vez — usada ao arrastar um ícone para uma posição específica da lista
@@ -650,9 +819,19 @@ app.post("/api/groups", async (req, res) => {
     throw Object.assign(new Error("Selecione ao menos dois favoritos."), {
       status: 400,
     });
+  // Agrupamento criado dentro de uma seção (arrastando um favorito sobre
+  // outro dela) continua morando nela — ver parentId no schema.prisma. Seção
+  // não tem pai: só um nível de aninhamento.
+  let parentId = null;
+  if (display === "tile" && req.body.parentId) {
+    const parent = await group(req, req.body.parentId);
+    if (parent.collectionId !== col.id || parent.display !== "section")
+      throw Object.assign(new Error("Seção inválida."), { status: 400 });
+    parentId = parent.id;
+  }
   const created = await prisma.$transaction(async (tx) => {
     const grp = await tx.bookmarkGroup.create({
-      data: { ...data, display, collectionId: col.id },
+      data: { ...data, display, parentId, collectionId: col.id },
     });
     if (bookmarkIds.length) {
       const { count } = await tx.bookmark.updateMany({
@@ -683,10 +862,37 @@ app.patch("/api/groups/:id", async (req, res) => {
   );
 });
 app.delete("/api/groups/:id", async (req, res) => {
-  await group(req, req.params.id);
-  // onDelete: SetNull no schema já devolve os favoritos pra fora do grupo.
-  await prisma.bookmarkGroup.delete({ where: { id: req.params.id } });
-  res.sendStatus(204);
+  const target = await group(req, req.params.id);
+  // Excluir um grupo nunca apaga favoritos: eles voltam pro container de
+  // onde o grupo veio — a seção, se for um agrupamento dentro de uma
+  // (parentId), ou a coleção — no fim da lista de lá, na mesma ordem em que
+  // estavam no grupo. Excluir uma seção devolve os favoritos soltos dela e os
+  // agrupamentos de dentro dela pra coleção (onDelete: SetNull no schema).
+  const destinationId = target.parentId || null;
+  const parent = destinationId
+    ? await prisma.bookmarkGroup.findUnique({ where: { id: destinationId } })
+    : null;
+  await prisma.$transaction(async (tx) => {
+    const [members, last] = await Promise.all([
+      tx.bookmark.findMany({
+        where: { groupId: target.id },
+        orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+        select: { id: true },
+      }),
+      tx.bookmark.aggregate({
+        where: { collectionId: target.collectionId, groupId: destinationId },
+        _max: { order: true },
+      }),
+    ]);
+    const start = (last._max.order ?? -1) + 1;
+    for (const [index, member] of members.entries())
+      await tx.bookmark.update({
+        where: { id: member.id },
+        data: { groupId: destinationId, order: start + index },
+      });
+    await tx.bookmarkGroup.delete({ where: { id: target.id } });
+  });
+  res.json({ returnedTo: parent ? { kind: "section", name: parent.name } : { kind: "collection" } });
 });
 const limits = new Map();
 app.post(["/api/metadata", "/api/icon"], async (req, res) => {
@@ -711,6 +917,52 @@ app.post(["/api/metadata", "/api/icon"], async (req, res) => {
     );
   } catch (e) {
     res.status(400).json({ error: e.message });
+  }
+});
+// "Atualizar imagens" da barra de ferramentas da coleção: busca de novo, pra
+// cada favorito, a melhor imagem disponível hoje (mesma escolha do metadata()
+// ao criar um favorito — og:image num post/artigo, o maior ícone do site
+// numa home) e troca a guardada quando mudou. Sites trocam de favicon/capa
+// com o tempo, e o que foi salvo na criação fica congelado sem isto. Um
+// favorito cuja busca falha (site fora do ar, sem ícone nenhum) mantém a
+// imagem atual em vez de ficar sem nenhuma. Uma rodada por dono de cada vez:
+// cada favorito pode custar várias requisições externas.
+const iconRefreshRunning = new Set();
+app.post("/api/collections/:id/refresh-icons", async (req, res) => {
+  const col = await collection(req, req.params.id);
+  if (iconRefreshRunning.has(req.owner.id))
+    return res
+      .status(429)
+      .json({ error: "Já existe uma atualização de imagens em andamento." });
+  iconRefreshRunning.add(req.owner.id);
+  try {
+    const bookmarks = await prisma.bookmark.findMany({
+      where: { collectionId: col.id },
+      select: { id: true, url: true, favicon: true },
+    });
+    const CONCURRENCY = 5;
+    let index = 0;
+    let updated = 0;
+    async function worker() {
+      while (index < bookmarks.length) {
+        const bookmark = bookmarks[index++];
+        try {
+          const result = await metadata(bookmark.url);
+          if (!result.favicon || result.favicon === bookmark.favicon) continue;
+          await prisma.bookmark.update({
+            where: { id: bookmark.id },
+            data: { favicon: result.favicon, color: result.color },
+          });
+          updated++;
+        } catch {}
+      }
+    }
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, bookmarks.length) }, worker),
+    );
+    res.json({ total: bookmarks.length, updated });
+  } finally {
+    iconRefreshRunning.delete(req.owner.id);
   }
 });
 // Achata pastas aninhadas além de um nível: o Linkable só tem coleção → grupo →

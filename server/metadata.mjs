@@ -189,7 +189,7 @@ export async function safeFetch(
     });
   return result;
 }
-export async function imageData(buffer, { crop = "inside" } = {}) {
+export async function imageData(buffer, { crop = "inside", width = 256, height = 256 } = {}) {
   if (isIco(buffer)) {
     if (buffer.readUInt16LE(4) > 32) throw new Error("O ícone contém imagens demais.");
     const images = await decodeIco(buffer, "image/png");
@@ -208,8 +208,8 @@ export async function imageData(buffer, { crop = "inside" } = {}) {
   // manifest) não devem ser reduzidos à toa antes de guardar.
   const png = await sharp(buffer, { limitInputPixels: 16000000 })
     .resize(
-      256,
-      256,
+      width,
+      height,
       crop === "cover"
         ? { fit: "cover", position: sharp.strategy.attention }
         : { fit: "inside", withoutEnlargement: true },

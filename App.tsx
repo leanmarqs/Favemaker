@@ -3,32 +3,39 @@ import {
   ArrowDownAZ,
   ArrowUpAZ,
   ArrowUpRight,
+  Ban,
   Bookmark as BookmarkIcon,
   CalendarDays,
+  Camera,
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  CircleUser,
   Construction,
+  Flag,
   Folder,
   Globe2,
   GripVertical,
   Heart,
+  Info,
   Link2,
   Lock,
   LockOpen,
   LogOut,
+  MessageCircle,
   Moon,
+  MoreVertical,
   Pencil,
   Plus,
+  RefreshCw,
   Search,
-  Share2,
   SlidersHorizontal,
   Sun,
   Trash2,
   User,
-  Users,
+  VolumeX,
   X,
   Upload,
   Copy,
@@ -36,7 +43,11 @@ import {
 } from "lucide-react";
 import type { Account, Bookmark, BookmarkGroup, Collection } from "./types";
 import PasswordField from "./PasswordField";
+import ShareButton from "./ShareButton";
+import { useIsSmallSource } from "./PosterRow";
 import CommunityFeed from "./Community";
+import CollectionDots from "./CollectionDots";
+import { useLanguage } from "./i18n";
 import { mockCollectionsByAuthor } from "./communityMock";
 import "./styles.css";
 
@@ -189,10 +200,46 @@ function Sphere({
     </span>
   );
 }
-// Ícone de grupo (várias moldura numa só, estilo App Library do iPhone): usa
-// a mesma classe "sphere" pra ter o mesmo tamanho/hover/border-radius de um
-// favorito comum, só que com uma mini-grade 2x2 dos favicons de dentro em vez
-// de uma imagem só. Não participa do sistema de hover-toolbar/preview-card
+// Card grande tipo pôster (mesmo visual do feed da Comunidade, ver
+// PosterRow.tsx) usado no lugar da Sphere pequena e redonda pros favoritos
+// soltos de "Suas coleções"/perfil público (não dentro do painel de grupo,
+// que continua com Sphere pequena — ver comentário em ".favorites .sphere"
+// no CSS). "shape" (círculo/quadrado/arredondado, configurável por coleção)
+// não faz mais sentido como CÍRCULO num pôster 2:3, então cai no mesmo canto
+// arredondado de "rounded"; só "square" (cantos retos) continua distinto.
+function PosterThumb({
+  bookmark,
+  shape = "circle",
+}: {
+  bookmark: Pick<Bookmark, "favicon" | "color" | "name" | "linkStatus">;
+  shape?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const { isSmallSource, onLoad } = useIsSmallSource();
+  const broken = bookmark.linkStatus === "broken";
+  useEffect(() => setFailed(false), [bookmark.favicon]);
+  return (
+    <span
+      className={`poster-tile ${shape === "square" ? "poster-tile-square" : ""} ${broken ? "link-broken" : ""}`}
+      style={{ "--orb": bookmark.color } as React.CSSProperties}
+    >
+      {bookmark.favicon && !failed ? (
+        <img
+          src={bookmark.favicon}
+          alt=""
+          className={isSmallSource ? "is-small-source" : ""}
+          onLoad={onLoad}
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <span>{bookmark.name.slice(0, 1).toUpperCase() || <Globe2 />}</span>
+      )}
+    </span>
+  );
+}
+// Ícone de grupo (estilo pasta do menu Iniciar do Windows 11): um card do
+// mesmo tamanho do pôster de um favorito comum (ver PosterThumb), com fundo
+// discreto e uma grade 2x2 dos favicons de dentro. Não participa do sistema de hover-toolbar/preview-card
 // (esse é tipado especificamente pra Bookmark) — clicar sempre abre o
 // popover de conteúdo do grupo, com ou sem o modo de edição ligado.
 function GroupTile({
@@ -206,30 +253,33 @@ function GroupTile({
   expanded?: boolean;
   onOpen: () => void;
 }) {
-  const borderRadius =
-    shape === "square" ? 0 : shape === "rounded" ? "28%" : "50%";
   const preview = group.bookmarks.slice(0, 4);
   const extra = group.bookmarks.length - preview.length;
   return (
     <button
       type="button"
-      className={`sphere sphere-${shape} group-tile ${expanded ? "is-expanded" : ""}`}
-      style={{ "--orb": group.color, borderRadius } as React.CSSProperties}
+      className={`group-tile ${shape === "square" ? "group-tile-square" : ""} ${expanded ? "is-expanded" : ""}`}
+      style={{ "--orb": group.color } as React.CSSProperties}
       aria-label={`Abrir grupo ${group.name}`}
       aria-pressed={expanded}
       title={group.name}
       onClick={onOpen}
     >
       <span className="group-tile-grid">
-        {preview.map((b) =>
-          b.favicon ? (
-            <img key={b.id} src={b.favicon} alt="" />
-          ) : (
-            <span key={b.id} className="group-tile-letter">
-              {b.name.slice(0, 1).toUpperCase() || <Globe2 size={9} />}
-            </span>
-          ),
-        )}
+        {preview.map((b) => (
+          <span key={b.id} className="group-tile-cell">
+            {b.favicon ? (
+              <img src={b.favicon} alt="" />
+            ) : (
+              <span
+                className="group-tile-letter"
+                style={{ "--orb": b.color } as React.CSSProperties}
+              >
+                {b.name.slice(0, 1).toUpperCase() || <Globe2 size={12} />}
+              </span>
+            )}
+          </span>
+        ))}
       </span>
       {extra > 0 && <span className="group-tile-badge">+{extra}</span>}
     </button>
@@ -240,10 +290,11 @@ export function CollectionRow({
   readOnly,
   toolbarsEnabled,
   // Quantos itens cabem numa "página" do pill fixo (setas de navegação) antes
-  // de precisar da seta pra ver o resto — 10 é o valor de sempre em "Suas
-  // coleções"; o feed da Comunidade usa um valor menor (ver Community.tsx)
-  // porque o card ali é bem mais estreito.
-  pageSize = 10,
+  // de precisar da seta pra ver o resto — 7 é o valor de sempre em "Suas
+  // coleções" (card grande tipo pôster, ver PosterThumb: cabem menos por
+  // linha que os ícones pequenos de antes); o feed da Comunidade usa um
+  // valor próprio (ver Community.tsx) porque o card ali é bem mais estreito.
+  pageSize = 7,
   likedIds,
   bookmarkedIds,
   edit,
@@ -263,6 +314,8 @@ export function CollectionRow({
   deleteGroup,
   sectionsBulkAction,
   dragHandle,
+  onUnsave,
+  refreshIcons,
 }: {
   collection: Collection;
   readOnly: boolean;
@@ -283,6 +336,7 @@ export function CollectionRow({
   createGroup: (
     collectionId: string,
     bookmarkIds: string[],
+    parentId?: string | null,
   ) => Promise<BookmarkGroup | null>;
   moveToGroup: (bookmarkId: string, groupId: string | null) => Promise<void>;
   reorderBookmarks: (
@@ -298,6 +352,7 @@ export function CollectionRow({
       description: string;
       showName: boolean;
       shape: string | null;
+      isPublic: boolean;
     },
   ) => Promise<void>;
   deleteGroup: (groupId: string) => Promise<void>;
@@ -317,8 +372,18 @@ export function CollectionRow({
     onDrop: () => void;
     onDragEnd: () => void;
   };
+  // Só passado ao renderizar a aba "Itens Salvos" (ver App): remove a
+  // referência inteira (coleção alheia seguida, cheia ou parcial) dos salvos
+  // do dono logado — diferente de "remove" acima, que apaga uma coleção de
+  // verdade e por isso nunca é usado nesse contexto (readOnly some com ele).
+  onUnsave?: () => void;
+  // "Atualizar imagens" (ver POST /api/collections/:id/refresh-icons) — só
+  // passado em "Suas coleções"; sem ele, o botão não aparece.
+  refreshIcons?: () => Promise<void>;
 }) {
+  const { t } = useLanguage();
   const [page, setPage] = useState(0);
+  const [refreshingIcons, setRefreshingIcons] = useState(false);
   const [direction, setDirection] = useState<"forward" | "backward">("forward");
   const [isPageTransitioning, setIsPageTransitioning] = useState(false);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc" | null>(
@@ -397,7 +462,6 @@ export function CollectionRow({
   const previewCardTimer = useRef<number | null>(null);
   const previewCardExitTimer = useRef<number | null>(null);
   const groupExpandTimer = useRef<number | null>(null);
-  const groupExpandExitTimer = useRef<number | null>(null);
   type GridItem =
     | { kind: "bookmark"; id: string; sortKey: string; bookmark: Bookmark }
     | { kind: "group"; id: string; sortKey: string; group: BookmarkGroup };
@@ -407,11 +471,20 @@ export function CollectionRow({
   // continuar visível pro dono poder adicionar favoritos a ela pelo "+" da
   // própria seção — só é escondida no perfil público (readOnly) quando não
   // sobra nenhum favorito visível lá dentro.
-  const tileGroups = collection.groups.filter(
-    (g) => g.display !== "section" && g.bookmarks.length,
-  );
+  // Agrupamentos de um container: a coleção (sectionId null) ou uma seção —
+  // um agrupamento criado dentro de uma seção continua nela (parentId).
+  const tilesIn = (sectionId: string | null) =>
+    collection.groups.filter(
+      (g) =>
+        g.display !== "section" &&
+        (g.parentId || null) === sectionId &&
+        g.bookmarks.length,
+    );
+  const tileGroups = tilesIn(null);
   const sectionGroups = collection.groups.filter(
-    (g) => g.display === "section" && (g.bookmarks.length || !readOnly),
+    (g) =>
+      g.display === "section" &&
+      (g.bookmarks.length || tilesIn(g.id).length || !readOnly),
   );
   const items: GridItem[] = [
     ...collection.bookmarks.map((b) => ({
@@ -430,8 +503,8 @@ export function CollectionRow({
   // Um "tile" (ícone de grupo) não tem posição própria na lista de favoritos
   // — arrastá-lo sobre outro ícone só pode agrupar, nunca reordenar, mesmo
   // soltando numa ponta (que noutro caso significaria "entre dois ícones").
-  const draggedIsTile = items.some(
-    (i) => i.id === draggedId && i.kind === "group",
+  const draggedIsTile = collection.groups.some(
+    (g) => g.id === draggedId && g.display !== "section",
   );
   // Contagem de favoritos de verdade (inclusive os de dentro de grupos) é
   // diferente da contagem de "slots" na grade (um grupo conta como 1 slot).
@@ -460,8 +533,6 @@ export function CollectionRow({
       if (previewCardExitTimer.current)
         window.clearTimeout(previewCardExitTimer.current);
       if (groupExpandTimer.current) window.clearTimeout(groupExpandTimer.current);
-      if (groupExpandExitTimer.current)
-        window.clearTimeout(groupExpandExitTimer.current);
     },
     [],
   );
@@ -498,22 +569,35 @@ export function CollectionRow({
   useEffect(() => {
     if (!toolbarsEnabled) return;
     if (groupExpandTimer.current) window.clearTimeout(groupExpandTimer.current);
-    if (groupExpandExitTimer.current)
-      window.clearTimeout(groupExpandExitTimer.current);
     setExpandedGroup(null);
   }, [toolbarsEnabled]);
-  // Rede de segurança pra fechar em cliques que não passam por um mouseleave
-  // (ex: clicar num link dentro da própria página sem mover o mouse antes).
+  // O painel do agrupamento só fecha com um clique fora dele (ou Esc, ou o X)
+  // — nunca por o cursor sair: o cartão de prévia de um link de dentro dele
+  // (e a barra de edição, e os diálogos abertos a partir dela) é desenhado
+  // FORA do painel, então fechar no mouseleave derrubava o painel justo ao
+  // usar um desses links. Cliques nesses elementos também não contam como
+  // "fora".
   useEffect(() => {
     if (!expandedGroup) return;
     function handlePointerDown(event: PointerEvent) {
       const target = event.target as HTMLElement;
-      if (target.closest(".group-expand-panel") || target.closest(".group-tile"))
+      if (
+        target.closest(
+          ".group-expand-panel, .group-tile, .favorite-preview-anchor, .favorite-controls, dialog",
+        )
+      )
         return;
       setExpandedGroup(null);
     }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setExpandedGroup(null);
+    }
     document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
   }, [expandedGroup]);
   const scheduleBookmarkToolbar = (next: {
     bookmark: Bookmark;
@@ -561,9 +645,9 @@ export function CollectionRow({
       250,
     );
   };
-  // Some rápido (ver duração da animação "favorite-preview-out" no CSS): o
-  // cartão continua montado durante essa saída (com a classe "is-leaving") e só
-  // é removido de fato depois que a animação termina.
+  // Some rápido (ver duração da animação "poster-expand-out-plain" no CSS):
+  // o cartão continua montado durante essa saída (com a classe "is-leaving")
+  // e só é removido de fato depois que a animação termina.
   const deferPreviewCardClear = () => {
     if (previewCardTimer.current) window.clearTimeout(previewCardTimer.current);
     previewCardTimer.current = window.setTimeout(() => {
@@ -591,24 +675,15 @@ export function CollectionRow({
   }) => {
     if (toolbarsEnabled) return;
     if (groupExpandTimer.current) window.clearTimeout(groupExpandTimer.current);
-    if (groupExpandExitTimer.current)
-      window.clearTimeout(groupExpandExitTimer.current);
     groupExpandTimer.current = window.setTimeout(
       () => setExpandedGroup(next),
       250,
     );
   };
-  const deferGroupExpandClear = () => {
+  // Cursor saiu do card antes do painel abrir: desiste de abrir. Depois de
+  // aberto, sair do card não fecha nada (ver o useEffect de pointerdown).
+  const cancelGroupExpandOpen = () => {
     if (groupExpandTimer.current) window.clearTimeout(groupExpandTimer.current);
-    groupExpandExitTimer.current = window.setTimeout(
-      () => setExpandedGroup(null),
-      250,
-    );
-  };
-  const keepGroupExpandVisible = () => {
-    if (groupExpandTimer.current) window.clearTimeout(groupExpandTimer.current);
-    if (groupExpandExitTimer.current)
-      window.clearTimeout(groupExpandExitTimer.current);
   };
   // Em qual terço horizontal do ícone-alvo o cursor está: os terços das
   // pontas reordenam a lista (não agrupam), o terço central agrupa — é essa
@@ -677,11 +752,15 @@ export function CollectionRow({
     setDragOverZone(null);
     setDragOverSectionId(null);
     if (!sourceId || sourceId === target.id) return;
+    // Agrupamento não entra em outro agrupamento nem vira item de um.
+    if (draggedIsTile) return;
     if (target.kind === "group" || zone === "center" || !zone) {
       if (target.kind === "group") {
         void moveToGroup(sourceId, target.id);
       } else {
-        void createGroup(collection.id, [sourceId, target.id]).then(
+        // Nasce no container do ícone de destino — dentro de uma seção, fica
+        // na seção (ver parentId no schema.prisma).
+        void createGroup(collection.id, [sourceId, target.id], containerGroupId).then(
           (created) => {
             if (created) setOpenGroup(created);
           },
@@ -702,7 +781,7 @@ export function CollectionRow({
     setDragOverId(null);
     setDragOverZone(null);
     setDragOverSectionId(null);
-    if (!sourceId) return;
+    if (!sourceId || draggedIsTile) return;
     const ids = bookmarkIdsInContainer(containerGroupId).filter(
       (id) => id !== sourceId,
     );
@@ -728,6 +807,11 @@ export function CollectionRow({
   const [groupDescription, setGroupDescription] = useState("");
   const [groupShowName, setGroupShowName] = useState(false);
   const [groupShape, setGroupShape] = useState<string | null>(null);
+  // Visibilidade da seção/agrupamento (ver comentário em BookmarkGroup no
+  // schema.prisma) — só tem efeito de verdade quando a própria coleção
+  // também é pública; dentro de uma coleção privada fica sempre escondido,
+  // não importa o valor aqui.
+  const [groupIsPublic, setGroupIsPublic] = useState(true);
   const [groupBusy, setGroupBusy] = useState(false);
   useEffect(() => {
     // Depende só de "openGroup" (não do id, nem de openGroupLive): os campos
@@ -743,6 +827,7 @@ export function CollectionRow({
       setGroupDescription(openGroupLive.description);
       setGroupShowName(openGroupLive.showName);
       setGroupShape(openGroupLive.shape || null);
+      setGroupIsPublic(openGroupLive.isPublic);
     }
   }, [openGroup]);
   useEffect(() => {
@@ -758,7 +843,7 @@ export function CollectionRow({
   // favorito e coleção. Estado local (não no App): o diálogo de editar
   // seção/grupo também é local a este CollectionRow.
   const [pendingDeleteGroup, setPendingDeleteGroup] =
-    useState<Pick<BookmarkGroup, "id" | "name" | "display"> | null>(null);
+    useState<Pick<BookmarkGroup, "id" | "name" | "display" | "parentId"> | null>(null);
   const deleteGroupDialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     if (pendingDeleteGroup && !deleteGroupDialog.current?.open)
@@ -778,6 +863,131 @@ export function CollectionRow({
   // pelo pill principal ("main") quanto por cada seção (containerKey = id da
   // seção), já que bookmarkToolbar/previewCard guardam de qual container elas
   // vieram — só desenha aqui quando bate com o container que está chamando.
+  // Painel com os favoritos de um agrupamento, aberto ao passar o mouse no
+  // card dele — renderizado dentro do mesmo ".favorite-anchor" do card (o
+  // pill principal, anchorKey "main", ou a seção onde ele vive), já que x/y
+  // são relativos a esse container.
+  function renderGroupExpandPanel(anchorKey: string) {
+    if (!expandedGroupLive) return null;
+    if ((expandedGroupLive.parentId || "main") !== anchorKey) return null;
+    return (
+      <div
+        className="group-expand-anchor"
+        style={{ left: expandedGroup?.x, top: expandedGroup?.y }}
+      >
+        <div
+          className="group-expand-panel"
+          role="dialog"
+          aria-label={expandedGroupLive.name}
+        >
+          <div className="group-expand-heading">
+            <button
+              type="button"
+              aria-label="Fechar"
+              onClick={() => setExpandedGroup(null)}
+            >
+              <X size={13} />
+            </button>
+          </div>
+          <div className="group-expand-icons">
+            {expandedGroupLive.bookmarks.map((b) => (
+              <div
+                className="favorite"
+                key={b.id}
+                onMouseEnter={(event) => {
+                  const container =
+                    event.currentTarget.closest(".favorite-anchor");
+                  const favoriteRect =
+                    event.currentTarget.getBoundingClientRect();
+                  const containerRect = container?.getBoundingClientRect();
+                  const x = containerRect
+                    ? favoriteRect.left -
+                      containerRect.left +
+                      favoriteRect.width / 2
+                    : undefined;
+                  if (toolbarsEnabled) {
+                    scheduleBookmarkToolbar({
+                      bookmark: b,
+                      containerKey: `group-expand:${anchorKey}`,
+                      x,
+                      y: containerRect
+                        ? favoriteRect.top - containerRect.top - 16
+                        : undefined,
+                    });
+                  } else {
+                    schedulePreviewCard({
+                      bookmark: b,
+                      containerKey: `group-expand:${anchorKey}`,
+                      x,
+                      y: containerRect
+                        ? favoriteRect.top -
+                          containerRect.top +
+                          favoriteRect.height / 2
+                        : undefined,
+                    });
+                  }
+                }}
+                onMouseLeave={(event) => {
+                  if (toolbarsEnabled) clearBookmarkToolbar(event);
+                  else deferPreviewCardClear();
+                }}
+              >
+                <a
+                  href={b.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={b.name}
+                  onClick={() => openBookmark(b)}
+                >
+                  <Sphere bookmark={b} shape={collection.shape} />
+                  <span className="sr-only">{b.name}</span>
+                </a>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  function openGroupExpandFrom(
+    event: React.MouseEvent<HTMLElement>,
+    groupId: string,
+  ) {
+    // Mesma lógica do cartão de prévia, só que pra abrir o painel de
+    // favoritos do grupo em vez de um cartão — ver scheduleGroupExpand.
+    const container = event.currentTarget.closest(".favorite-anchor");
+    const tileRect = event.currentTarget.getBoundingClientRect();
+    const containerRect = container?.getBoundingClientRect();
+    const x = containerRect
+      ? tileRect.left - containerRect.left + tileRect.width / 2
+      : undefined;
+    // Topo do tile menos uma folga (não o centro): o painel cresce pra CIMA a
+    // partir daqui (ver transform em .group-expand-anchor), então isso
+    // precisa ficar acima do ícone inteiro, senão o painel cobre o próprio tile.
+    const y = containerRect ? tileRect.top - containerRect.top - 10 : undefined;
+    scheduleGroupExpand({ groupId, x, y });
+  }
+  function renderGroupTile(group: BookmarkGroup) {
+    return (
+      <>
+        <GroupTile
+          group={group}
+          shape={group.shape || collection.shape}
+          expanded={expandedGroup?.groupId === group.id}
+          onOpen={() => {
+            // Sem o lápis, o painel já abre sozinho ao passar o mouse —
+            // clicar não faz nada.
+            if (toolbarsEnabled) setOpenGroup(group);
+          }}
+        />
+        {group.showName ? (
+          <span className="favorite-name">{group.name}</span>
+        ) : (
+          <span className="sr-only">{group.name}</span>
+        )}
+      </>
+    );
+  }
   function renderFavoriteOverlays(containerKey: string) {
     const toolbar =
       bookmarkToolbar?.containerKey === containerKey ? bookmarkToolbar : null;
@@ -816,33 +1026,33 @@ export function CollectionRow({
             className="favorite-preview-anchor"
             style={{ left: preview.x, top: preview.y }}
           >
+            {/* Mesmo layout/animação do card grande do feed da Comunidade
+                (".poster-expanded", ver PosterRow.tsx) — só o posicionamento
+                muda (aqui é a âncora acima, calculada em JS a partir do card
+                de repouso, ver schedulePreviewCard). */}
             <div
               key={preview.bookmark.id}
-              className={`favorite-preview ${previewCardLeaving ? "is-leaving" : ""}`}
+              className={`poster-expanded ${previewCardLeaving ? "is-leaving" : ""}`}
               aria-label={`Prévia do favorito ${preview.bookmark.name}`}
               onMouseEnter={keepPreviewCardVisible}
               onMouseLeave={deferPreviewCardClear}
             >
-              <a
-                className="favorite-preview-link"
-                href={preview.bookmark.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={`Abrir favorito ${preview.bookmark.name}`}
-                onClick={() => openBookmark(preview.bookmark)}
-              />
-              <div
-                className="favorite-preview-media"
+              <span
+                className="poster-expanded-media"
                 style={{ background: preview.bookmark.color }}
               >
+                <a
+                  className="poster-media-link"
+                  href={preview.bookmark.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Abrir favorito ${preview.bookmark.name}`}
+                  onClick={() => openBookmark(preview.bookmark)}
+                />
                 {preview.bookmark.favicon ? (
                   <PreviewFavicon src={preview.bookmark.favicon} />
                 ) : (
-                  <span>
-                    {preview.bookmark.name.slice(0, 1).toUpperCase() || (
-                      <Globe2 />
-                    )}
-                  </span>
+                  <Globe2 />
                 )}
                 {!readOnly && (
                   <button
@@ -855,12 +1065,17 @@ export function CollectionRow({
                     <Pencil size={13} />
                   </button>
                 )}
-                <strong className="favorite-preview-name">
+                <span className="poster-expanded-title">
                   {preview.bookmark.name}
-                </strong>
-              </div>
-              <div className="favorite-preview-footer">
-                <div className="favorite-preview-actions">
+                </span>
+              </span>
+              <div className="poster-expanded-panel">
+                {preview.bookmark.description && (
+                  <p className="poster-expanded-description">
+                    {preview.bookmark.description}
+                  </p>
+                )}
+                <div className="poster-expanded-actions">
                   <button
                     type="button"
                     aria-label={`Curtir favorito ${preview.bookmark.name}`}
@@ -871,36 +1086,50 @@ export function CollectionRow({
                     }
                     onClick={() => toggleLiked(preview.bookmark)}
                   >
-                    <Heart size={15} />
+                    <Heart
+                      size={14}
+                      fill={likedIds.includes(preview.bookmark.id) ? "currentColor" : "none"}
+                    />
+                    {preview.bookmark.likes !== undefined && preview.bookmark.likes}
                   </button>
                   <button
                     type="button"
                     aria-label={`Favoritar ${preview.bookmark.name}`}
-                    aria-pressed={bookmarkedIds.includes(preview.bookmark.id)}
+                    aria-pressed={bookmarkedIds.includes(
+                      preview.bookmark.savedFromId || preview.bookmark.id,
+                    )}
                     title="Favoritar"
                     className={
-                      bookmarkedIds.includes(preview.bookmark.id)
+                      bookmarkedIds.includes(
+                        preview.bookmark.savedFromId || preview.bookmark.id,
+                      )
                         ? "active"
                         : ""
                     }
                     onClick={() => toggleBookmarked(preview.bookmark)}
                   >
-                    <BookmarkIcon size={15} />
+                    <BookmarkIcon
+                      size={14}
+                      fill={
+                        bookmarkedIds.includes(
+                          preview.bookmark.savedFromId || preview.bookmark.id,
+                        )
+                          ? "currentColor"
+                          : "none"
+                      }
+                    />
+                    {preview.bookmark.saves !== undefined && preview.bookmark.saves}
                   </button>
-                  <button
-                    type="button"
-                    aria-label={`Compartilhar favorito ${preview.bookmark.name}`}
-                    title="Compartilhar"
-                    onClick={() => shareBookmark(preview.bookmark)}
+                  <ShareButton
+                    url={preview.bookmark.url}
+                    title={preview.bookmark.name}
+                    label={`Compartilhar favorito ${preview.bookmark.name}`}
+                    size={14}
+                    onCopyLink={() => shareBookmark(preview.bookmark)}
                   >
-                    <Share2 size={15} />
-                  </button>
+                    {preview.bookmark.shares !== undefined && preview.bookmark.shares}
+                  </ShareButton>
                 </div>
-                {preview.bookmark.description && (
-                  <div className="favorite-preview-meta">
-                    <span>{preview.bookmark.description}</span>
-                  </div>
-                )}
               </div>
             </div>
           </div>
@@ -911,6 +1140,7 @@ export function CollectionRow({
   return (
     <>
     <article
+      data-collection-id={collection.id}
       className={`collection ${bookmarkToolbar || toolbarsEnabled || previewCard ? "has-visible-toolbar" : ""} ${dragHandle.dragOver ? "drop-target-collection" : ""}`}
       onDragOver={(event) => {
         if (!toolbarsEnabled) return;
@@ -929,88 +1159,136 @@ export function CollectionRow({
             className="collection-dot"
             style={{ background: collection.color }}
           />
-          <h3>{collection.name}</h3>
+          <h3>
+            {collection.name}
+            {collection.savedFromAuthorName && (
+              <span className="collection-saved-from">
+                {" "}
+                por{" "}
+                <a href={`/?perfil=${collection.savedFromAuthorId}`}>
+                  {collection.savedFromAuthorName}
+                </a>
+              </span>
+            )}
+          </h3>
           <span className="count">{totalBookmarks}</span>
         </div>
-        {(!readOnly || collection.id === "temporary-filter") && (
+        <div className="collection-heading-actions">
+          {onUnsave && (
+            <button
+              type="button"
+              className="collection-unsave"
+              aria-label={t("collection_unsave_aria", { name: collection.name })}
+              onClick={onUnsave}
+            >
+              {t("collection_unsave")}
+            </button>
+          )}
           <div
             className="collection-controls"
             aria-label={`Ações da coleção ${collection.name}`}
           >
-            <button
-              type="button"
-              aria-label={`${isExpanded ? "Recolher" : "Expandir"} coleção ${collection.name}`}
-              aria-expanded={isExpanded}
-              title={isExpanded ? "Recolher coleção" : "Expandir coleção"}
-              onClick={() => toggleBehavior(collection)}
-            >
-              {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-            </button>
-            {!readOnly && toolbarsEnabled && (
-              <>
-                <span
-                  role="button"
-                  tabIndex={0}
-                  className={`drag-handle ${dragHandle.dragging ? "is-dragging" : ""}`}
-                  aria-label={`Arrastar para reordenar a coleção ${collection.name}`}
-                  title="Arrastar para reordenar"
-                  draggable
-                  onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = "move";
-                    dragHandle.onDragStart();
-                  }}
-                  onDragEnd={dragHandle.onDragEnd}
-                >
-                  <GripVertical size={13} />
-                </span>
+          <button
+            type="button"
+            aria-label={`${isExpanded ? "Recolher" : "Expandir"} coleção ${collection.name}`}
+            aria-expanded={isExpanded}
+            title={isExpanded ? "Recolher coleção" : "Expandir coleção"}
+            onClick={() => toggleBehavior(collection)}
+          >
+            {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+          </button>
+          {!readOnly && toolbarsEnabled && (
+            <>
+              <span
+                role="button"
+                tabIndex={0}
+                className={`drag-handle ${dragHandle.dragging ? "is-dragging" : ""}`}
+                aria-label={`Arrastar para reordenar a coleção ${collection.name}`}
+                title="Arrastar para reordenar"
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = "move";
+                  dragHandle.onDragStart();
+                }}
+                onDragEnd={dragHandle.onDragEnd}
+              >
+                <GripVertical size={13} />
+              </span>
+              <button
+                type="button"
+                aria-label={`Ordenar favoritos de ${collection.name} de ${sortDirection === "asc" ? "Z a A" : "A a Z"}`}
+                title={
+                  sortDirection === "asc"
+                    ? "Ordenar de Z a A"
+                    : "Ordenar de A a Z"
+                }
+                onClick={() =>
+                  setSortDirection((value) =>
+                    value === "asc" ? "desc" : "asc",
+                  )
+                }
+              >
+                {sortDirection === "desc" ? (
+                  <ArrowDownAZ size={13} />
+                ) : (
+                  <ArrowUpAZ size={13} />
+                )}
+              </button>
+              <button
+                type="button"
+                aria-label={`Adicionar favorito à coleção ${collection.name}`}
+                title="Adicionar favorito"
+                onClick={() => add()}
+              >
+                <Plus size={14} />
+              </button>
+              {refreshIcons && (
                 <button
                   type="button"
-                  aria-label={`Ordenar favoritos de ${collection.name} de ${sortDirection === "asc" ? "Z a A" : "A a Z"}`}
+                  className={refreshingIcons ? "is-refreshing" : undefined}
+                  aria-label={t("collection_refresh_icons_aria", {
+                    name: collection.name,
+                  })}
                   title={
-                    sortDirection === "asc"
-                      ? "Ordenar de Z a A"
-                      : "Ordenar de A a Z"
+                    refreshingIcons
+                      ? t("collection_refresh_icons_running")
+                      : t("collection_refresh_icons")
                   }
-                  onClick={() =>
-                    setSortDirection((value) =>
-                      value === "asc" ? "desc" : "asc",
-                    )
-                  }
+                  aria-busy={refreshingIcons}
+                  disabled={refreshingIcons}
+                  onClick={async () => {
+                    setRefreshingIcons(true);
+                    try {
+                      await refreshIcons();
+                    } finally {
+                      setRefreshingIcons(false);
+                    }
+                  }}
                 >
-                  {sortDirection === "desc" ? (
-                    <ArrowDownAZ size={13} />
-                  ) : (
-                    <ArrowUpAZ size={13} />
-                  )}
+                  <RefreshCw size={13} />
                 </button>
-                <button
-                  type="button"
-                  aria-label={`Adicionar favorito à coleção ${collection.name}`}
-                  title="Adicionar favorito"
-                  onClick={() => add()}
-                >
-                  <Plus size={14} />
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Editar coleção ${collection.name}`}
-                  title="Editar coleção"
-                  onClick={edit}
-                >
-                  <Pencil size={13} />
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Excluir coleção ${collection.name}`}
-                  title="Excluir coleção"
-                  onClick={remove}
-                >
-                  <Trash2 size={13} />
-                </button>
-              </>
-            )}
+              )}
+              <button
+                type="button"
+                aria-label={`Editar coleção ${collection.name}`}
+                title="Editar coleção"
+                onClick={edit}
+              >
+                <Pencil size={13} />
+              </button>
+              <button
+                type="button"
+                className="collection-control-remove"
+                aria-label={`Excluir coleção ${collection.name}`}
+                title="Excluir coleção"
+                onClick={remove}
+              >
+                <Trash2 size={13} />
+              </button>
+            </>
+          )}
           </div>
-        )}
+        </div>
       </div>
       {collection.description && (
         <p className="collection-description">{collection.description}</p>
@@ -1020,89 +1298,8 @@ export function CollectionRow({
       >
       <div className={`pill favorite-anchor ${isExpanded ? "is-expanded" : ""}`}>
         {renderFavoriteOverlays("main")}
-        {renderFavoriteOverlays("group-expand")}
-        {expandedGroupLive && (
-          <div
-            className="group-expand-anchor"
-            style={{ left: expandedGroup?.x, top: expandedGroup?.y }}
-          >
-            <div
-              className="group-expand-panel"
-              onMouseEnter={keepGroupExpandVisible}
-              onMouseLeave={deferGroupExpandClear}
-            >
-              <div className="group-expand-heading">
-                <span>{expandedGroupLive.name}</span>
-                <button
-                  type="button"
-                  aria-label="Fechar"
-                  onClick={() => {
-                    keepGroupExpandVisible();
-                    setExpandedGroup(null);
-                  }}
-                >
-                  <X size={13} />
-                </button>
-              </div>
-              <div className="group-expand-icons">
-                {expandedGroupLive.bookmarks.map((b) => (
-                  <div
-                    className="favorite"
-                    key={b.id}
-                    onMouseEnter={(event) => {
-                      const container =
-                        event.currentTarget.closest(".favorite-anchor");
-                      const favoriteRect =
-                        event.currentTarget.getBoundingClientRect();
-                      const containerRect = container?.getBoundingClientRect();
-                      const x = containerRect
-                        ? favoriteRect.left -
-                          containerRect.left +
-                          favoriteRect.width / 2
-                        : undefined;
-                      if (toolbarsEnabled) {
-                        scheduleBookmarkToolbar({
-                          bookmark: b,
-                          containerKey: "group-expand",
-                          x,
-                          y: containerRect
-                            ? favoriteRect.top - containerRect.top - 16
-                            : undefined,
-                        });
-                      } else {
-                        schedulePreviewCard({
-                          bookmark: b,
-                          containerKey: "group-expand",
-                          x,
-                          y: containerRect
-                            ? favoriteRect.top -
-                              containerRect.top +
-                              favoriteRect.height / 2
-                            : undefined,
-                        });
-                      }
-                    }}
-                    onMouseLeave={(event) => {
-                      if (toolbarsEnabled) clearBookmarkToolbar(event);
-                      else deferPreviewCardClear();
-                    }}
-                  >
-                    <a
-                      href={b.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title={b.name}
-                      onClick={() => openBookmark(b)}
-                    >
-                      <Sphere bookmark={b} shape={collection.shape} />
-                      <span className="sr-only">{b.name}</span>
-                    </a>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
+        {renderFavoriteOverlays("group-expand:main")}
+        {renderGroupExpandPanel("main")}
         {!isExpanded && (
           <button
             className="page-arrow"
@@ -1193,40 +1390,24 @@ export function CollectionRow({
                         : undefined,
                     });
                   } else {
-                    // Centro do ícone (não o topo): o cartão de prévia se ancora por
-                    // esse ponto pra crescer ao redor do ícone, não acima dele.
+                    // Topo do card (não o centro): com o card grande tipo
+                    // pôster (ver PosterThumb), ancorar no centro fazia o
+                    // cartão de prévia nascer bem mais baixo quanto mais alto
+                    // o card ficava — ancorado no topo, cresce pra baixo a
+                    // partir dali sempre do mesmo jeito, independente da
+                    // altura do card (mesma ideia do ".poster-expanded" no
+                    // feed da Comunidade, que também nasce do topo).
                     schedulePreviewCard({
                       bookmark: b,
                       containerKey: "main",
                       x,
                       y: containerRect
-                        ? favoriteRect.top -
-                          containerRect.top +
-                          favoriteRect.height / 2
+                        ? favoriteRect.top - containerRect.top
                         : undefined,
                     });
                   }
                 } else {
-                  // Mesma lógica do cartão de prévia, só que pra abrir o painel
-                  // de favoritos do grupo em vez de um cartão — ver
-                  // scheduleGroupExpand. Não faz nada com o lápis ligado (nesse
-                  // modo, clicar no tile abre o modal de edição em vez disso).
-                  const container =
-                    event.currentTarget.closest(".favorite-anchor");
-                  const tileRect =
-                    event.currentTarget.getBoundingClientRect();
-                  const containerRect = container?.getBoundingClientRect();
-                  const x = containerRect
-                    ? tileRect.left - containerRect.left + tileRect.width / 2
-                    : undefined;
-                  // Topo do tile menos uma folga (não o centro): o painel
-                  // cresce pra CIMA a partir daqui (ver transform em
-                  // .group-expand-anchor), então isso precisa ficar acima do
-                  // ícone inteiro, senão o painel cobre o próprio tile.
-                  const y = containerRect
-                    ? tileRect.top - containerRect.top - 10
-                    : undefined;
-                  scheduleGroupExpand({ groupId: item.group.id, x, y });
+                  openGroupExpandFrom(event, item.group.id);
                 }
               }}
               onMouseLeave={(event) => {
@@ -1234,43 +1415,24 @@ export function CollectionRow({
                   if (toolbarsEnabled) clearBookmarkToolbar(event);
                   else deferPreviewCardClear();
                 } else {
-                  deferGroupExpandClear();
+                  cancelGroupExpandOpen();
                 }
               }}
             >
               {item.kind === "bookmark" ? (
                 <a
+                  className="favorite-poster-link"
                   href={item.bookmark.url}
                   target="_blank"
                   rel="noopener noreferrer"
                   title={item.bookmark.name}
                   onClick={() => openBookmark(item.bookmark)}
                 >
-                  <Sphere bookmark={item.bookmark} shape={collection.shape} />
-                  <span className="sr-only">{item.bookmark.name}</span>
+                  <PosterThumb bookmark={item.bookmark} shape={collection.shape} />
+                  <span className="favorite-name">{item.bookmark.name}</span>
                 </a>
               ) : (
-                <>
-                  <GroupTile
-                    group={item.group}
-                    shape={item.group.shape || collection.shape}
-                    expanded={expandedGroup?.groupId === item.group.id}
-                    onOpen={() => {
-                      // Sem o lápis, o painel já abre sozinho ao passar o
-                      // mouse (ver onMouseEnter acima) — clicar não faz nada.
-                      if (toolbarsEnabled) setOpenGroup(item.group);
-                    }}
-                  />
-                  {item.group.showName ? (
-                    <span className="favorite-name">
-                      {item.group.name.length > 24
-                        ? `${item.group.name.slice(0, 24)}…`
-                        : item.group.name}
-                    </span>
-                  ) : (
-                    <span className="sr-only">{item.group.name}</span>
-                  )}
-                </>
+                renderGroupTile(item.group)
               )}
             </div>
           ))}
@@ -1306,6 +1468,7 @@ export function CollectionRow({
                 : b.name.localeCompare(a.name, "pt-BR"),
             )
           : section.bookmarks;
+        const sectionTiles = tilesIn(section.id);
         return (
         <div
           className={`collection-section favorite-anchor ${
@@ -1412,6 +1575,8 @@ export function CollectionRow({
             )}
           </div>
           {renderFavoriteOverlays(section.id)}
+          {renderFavoriteOverlays(`group-expand:${section.id}`)}
+          {renderGroupExpandPanel(section.id)}
           {!sectionIsCollapsed && (
           <div className="favorites collection-section-favorites">
             {sortedSectionBookmarks.map((b) => (
@@ -1475,14 +1640,17 @@ export function CollectionRow({
                         : undefined,
                     });
                   } else {
+                    // Topo do card, não o centro — mesmo motivo da grade
+                    // principal logo acima (ver comentário lá): ancorar no
+                    // centro cresce junto com a altura do card grande tipo
+                    // pôster, fazendo o cartão de prévia nascer bem mais
+                    // baixo do que devia.
                     schedulePreviewCard({
                       bookmark: b,
                       containerKey: section.id,
                       x,
                       y: containerRect
-                        ? favoriteRect.top -
-                          containerRect.top +
-                          favoriteRect.height / 2
+                        ? favoriteRect.top - containerRect.top
                         : undefined,
                     });
                   }
@@ -1493,18 +1661,64 @@ export function CollectionRow({
                 }}
               >
                 <a
+                  className="favorite-poster-link"
                   href={b.url}
                   target="_blank"
                   rel="noopener noreferrer"
                   title={b.name}
                   onClick={() => openBookmark(b)}
                 >
-                  <Sphere bookmark={b} shape={collection.shape} />
-                  <span className="sr-only">{b.name}</span>
+                  <PosterThumb bookmark={b} shape={collection.shape} />
+                  <span className="favorite-name">{b.name}</span>
                 </a>
               </div>
             ))}
-            {!section.bookmarks.length && (
+            {sectionTiles.map((g) => (
+              <div
+                className={`favorite ${
+                  dragOverId === g.id && draggedId !== g.id ? "drop-target" : ""
+                }`}
+                key={g.id}
+                draggable={toolbarsEnabled}
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = "move";
+                  setDraggedId(g.id);
+                }}
+                onDragOver={(event) => {
+                  if (
+                    !toolbarsEnabled ||
+                    !draggedId ||
+                    draggedId === g.id ||
+                    draggedIsTile
+                  )
+                    return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setDragOverSectionId(section.id);
+                  setDragOverId(g.id);
+                  setDragOverZone("center");
+                }}
+                onDragLeave={() =>
+                  setDragOverId((id) => (id === g.id ? null : id))
+                }
+                onDrop={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  handleFavoriteDrop({ kind: "group", id: g.id }, section.id);
+                }}
+                onDragEnd={() => {
+                  setDraggedId(null);
+                  setDragOverId(null);
+                  setDragOverZone(null);
+                  setDragOverSectionId(null);
+                }}
+                onMouseEnter={(event) => openGroupExpandFrom(event, g.id)}
+                onMouseLeave={cancelGroupExpandOpen}
+              >
+                {renderGroupTile(g)}
+              </div>
+            ))}
+            {!section.bookmarks.length && !sectionTiles.length && (
               <span className="empty-row">Seção vazia</span>
             )}
           </div>
@@ -1642,7 +1856,12 @@ export function CollectionRow({
                       type="button"
                       aria-label={`Remover ${bookmark.name} do grupo`}
                       title="Remover do grupo"
-                      onClick={() => void moveToGroup(bookmark.id, null)}
+                      onClick={() =>
+                        void moveToGroup(
+                          bookmark.id,
+                          openGroupLive.parentId || null,
+                        )
+                      }
                     >
                       <X size={14} />
                     </button>
@@ -1717,6 +1936,29 @@ export function CollectionRow({
             </div>
           )}
           {canEditGroup && (
+            <div>
+              <label>
+                Visibilidade{" "}
+                {!collection.isPublic && (
+                  <span style={{ color: "var(--muted)", fontWeight: 400 }}>
+                    (a coleção é privada — a seção só fica visível se a coleção virar pública)
+                  </span>
+                )}
+              </label>
+              <button
+                type="button"
+                aria-label={groupIsPublic ? "Tornar seção privada" : "Tornar seção pública"}
+                aria-pressed={!groupIsPublic}
+                title={groupIsPublic ? "Privar" : "Exibir"}
+                className={!groupIsPublic ? "active" : ""}
+                onClick={() => setGroupIsPublic((current) => !current)}
+              >
+                {groupIsPublic ? <LockOpen size={16} /> : <Lock size={16} />}
+                {groupIsPublic ? "Pública" : "Privada"}
+              </button>
+            </div>
+          )}
+          {canEditGroup && (
             <div className="modal-footer">
               <button
                 className="secondary cancel"
@@ -1738,6 +1980,7 @@ export function CollectionRow({
                     description: groupDescription,
                     showName: groupShowName,
                     shape: groupShape,
+                    isPublic: groupIsPublic,
                   });
                   setGroupBusy(false);
                   setOpenGroup(null);
@@ -1778,9 +2021,19 @@ export function CollectionRow({
           </div>
           <div className="delete-confirm">
             <p>
-              Excluir "{pendingDeleteGroup.name}"? Os favoritos que estão nela
-              não são apagados — só voltam a ficar fora de qualquer{" "}
-              {pendingDeleteGroup.display === "section" ? "seção" : "grupo"}.
+              {pendingDeleteGroup.display === "section"
+                ? t("section_delete_confirm", { name: pendingDeleteGroup.name })
+                : pendingDeleteGroup.parentId
+                  ? t("group_delete_confirm_section", {
+                      name: pendingDeleteGroup.name,
+                      section:
+                        collection.groups.find(
+                          (g) => g.id === pendingDeleteGroup.parentId,
+                        )?.name || "",
+                    })
+                  : t("group_delete_confirm_collection", {
+                      name: pendingDeleteGroup.name,
+                    })}
             </p>
             <button
               type="button"
@@ -1803,17 +2056,120 @@ export function CollectionRow({
     </>
   );
 }
+// Reduz uma foto (ex: 3840x2160 direto da câmera) antes de mandar pro
+// servidor — sem isso, qualquer foto um pouco grande batia num limite de
+// tamanho arbitrário e obrigava a pessoa a ir reduzir a imagem em outro
+// programa antes de conseguir trocar avatar/capa. O servidor já redimensiona
+// a imagem de qualquer forma (ver imageData em server/metadata.mjs), então
+// não há motivo pra mandar mais pixels do que o necessário: um <canvas> fora
+// da tela reduz localmente pro maior lado não passar de "maxDimension" (nunca
+// amplia uma imagem menor) e reexporta como JPEG (mantém PNG só quando a
+// original já era PNG, pra não perder transparência de um logo/ícone).
+// "size" acima de MAX_SOURCE_BYTES é rejeitado ANTES de tentar decodificar —
+// uma imagem gigantesca (ex: 100MB) pode travar a aba tentando abrir no
+// <img>/<canvas>, então esse teto é só uma proteção contra esse caso extremo,
+// bem folgado em relação a qualquer foto de celular/câmera normal.
+const MAX_SOURCE_BYTES = 25 * 1024 * 1024;
+function downscaleImage(file: File, maxDimension: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (file.size > MAX_SOURCE_BYTES) {
+      reject(new Error("Escolha uma imagem de até 25 MB."));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Não foi possível ler o arquivo."));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Não foi possível processar a imagem."));
+      img.onload = () => {
+        const scale = Math.min(1, maxDimension / Math.max(img.naturalWidth, img.naturalHeight));
+        const width = Math.max(1, Math.round(img.naturalWidth * scale));
+        const height = Math.max(1, Math.round(img.naturalHeight * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          reject(new Error("Não foi possível processar a imagem."));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        const mime = file.type === "image/png" ? "image/png" : "image/jpeg";
+        resolve(canvas.toDataURL(mime, 0.85));
+      };
+      img.src = String(reader.result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+function loadImageFromUrl(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Não foi possível processar a imagem."));
+    img.src = url;
+  });
+}
+// Mesma proporção de ".public-profile-banner" (styles.css) — não os 1500x500
+// guardados antes (ver POST /api/auth/banner): aquele valor foi escolhido
+// solto, sem olhar a caixa onde a capa realmente aparece (1100x180 no
+// cabeçalho, bem mais larga/baixa que 3:1), então a imagem salva ficava mais
+// "alta" que a caixa e acabava sendo recortada DE NOVO ali (object-fit:cover
+// com posição central), empurrando o enquadramento escolhido no slider pro
+// centro. Cortar aqui já nesta proporção — e guardar no servidor nela também
+// — faz o "cover" do servidor virar só um resize, e o "cover" da própria
+// exibição não ter mais nada sobrando pra recortar.
+const BANNER_ASPECT = 1100 / 180;
+async function cropBannerImage(file: File, offsetY: number): Promise<string> {
+  if (file.size > MAX_SOURCE_BYTES) throw new Error("Escolha uma imagem de até 25 MB.");
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadImageFromUrl(url);
+    const srcAspect = img.naturalWidth / img.naturalHeight;
+    // Fonte mais larga que a capa: sobra largura, corta as laterais (mantém
+    // centralizado — só o slider vertical foi pedido). Fonte mais estreita
+    // (o caso comum: qualquer foto normal é bem menos larga que 3:1): sobra
+    // altura, e é essa sobra que o slider percorre.
+    const sw = srcAspect > BANNER_ASPECT ? img.naturalHeight * BANNER_ASPECT : img.naturalWidth;
+    const sh = srcAspect > BANNER_ASPECT ? img.naturalHeight : img.naturalWidth / BANNER_ASPECT;
+    const sx = (img.naturalWidth - sw) / 2;
+    const sy = (img.naturalHeight - sh) * (offsetY / 100);
+    const outWidth = Math.round(Math.min(1920, sw));
+    const outHeight = Math.round(outWidth / BANNER_ASPECT);
+    const canvas = document.createElement("canvas");
+    canvas.width = outWidth;
+    canvas.height = outHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Não foi possível processar a imagem.");
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, outWidth, outHeight);
+    const mime = file.type === "image/png" ? "image/png" : "image/jpeg";
+    return canvas.toDataURL(mime, 0.85);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
 export default function App({
   account,
   onLogout,
   googleClientId,
 }: { account?: Account; onLogout?: () => void; googleClientId?: string } = {}) {
-  const shareParams = new URLSearchParams(location.search);
-  const sharedId = shareParams.get("perfil");
+  const { t } = useLanguage();
+  // Id do perfil sendo visitado — estado (não um const recalculado a cada
+  // render a partir da URL) porque a navegação entre perfis agora acontece
+  // sem recarregar a página (ver navigateToProfile/navigateHome abaixo):
+  // history.pushState muda a URL, mas só atualizar esse estado é que faz a
+  // página re-renderizar mostrando o novo perfil.
+  const [sharedId, setSharedId] = useState(
+    () => new URLSearchParams(location.search).get("perfil"),
+  );
   const readOnly = Boolean(sharedId);
   // Fallback de exibição (nome/usuário/cor/avatar) pro cabeçalho do perfil
   // público quando o id não é de uma conta real — ver comentário em
   // GET /api/public/:id (server/index.mjs) e publicProfileHref (Community.tsx).
+  // Continua lido direto da URL (não é estado): toda navegação client-side
+  // dá pushState ANTES de mudar "sharedId", então esses parâmetros já estão
+  // corretos em location.search no momento em que este componente re-renderiza.
+  const shareParams = new URLSearchParams(location.search);
   const sharedFallback = {
     name: shareParams.get("nome") || "",
     username: shareParams.get("usuario") || "",
@@ -1826,9 +2182,44 @@ export default function App({
     name: string;
     username: string;
     avatar: string;
+    banner: string;
     followerCount: number;
+    followingCount: number;
     memberSince: string | null;
   } | null>(null);
+  // Liga/desliga os controles de trocar avatar/capa direto na própria página
+  // de perfil (ver isSelf mais abaixo) — só existe enquanto isSelf for true;
+  // navegar pra outro perfil (ou pra fora do perfil) sempre desliga de novo.
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  // Capa escolhida mas ainda não salva — mostra o slider de reposicionamento
+  // (ver cropBannerImage) em vez de subir a imagem na hora, pra dar chance de
+  // escolher qual parte dela aparece antes de confirmar. "url" é um object
+  // URL (URL.createObjectURL) que precisa ser revogado quando descartado.
+  const [bannerDraft, setBannerDraft] = useState<{
+    file: File;
+    url: string;
+    offsetY: number;
+  } | null>(null);
+  // Minha relação com o perfil sendo visitado (sigo/bloqueei) — separada de
+  // "viewedProfile" (dados públicos do dono) porque só existe pra visitante
+  // autenticado; segue o mesmo par de listas usado no feed da Comunidade
+  // (ver loadCommunityState logo abaixo e followedAuthorIds/blockedAuthorIds
+  // em GET /api/community/state, server/community.mjs).
+  const [followedAuthorIds, setFollowedAuthorIds] = useState<string[]>([]);
+  const [blockedAuthorIds, setBlockedAuthorIds] = useState<string[]>([]);
+  const [relationBusy, setRelationBusy] = useState(false);
+  const [isProfileActionsMenuOpen, setIsProfileActionsMenuOpen] = useState(false);
+  const profileActionsMenu = useRef<HTMLDivElement>(null);
+  // Painel "Sobre esta conta" do menu "⋮" do perfil público — mesma ideia do
+  // painel homônimo da Comunidade (Community.tsx), só que sem precisar
+  // buscar nada à parte: os dados já estão em "viewedProfile"/"collections"
+  // (o próprio motivo de estar nesta página).
+  const [isAboutOpen, setIsAboutOpen] = useState(false);
+  const aboutDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (isAboutOpen) aboutDialog.current?.showModal();
+    else aboutDialog.current?.close();
+  }, [isAboutOpen]);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [ownerId, setOwnerId] = useState("");
   const [loading, setLoading] = useState(true);
@@ -1873,14 +2264,34 @@ export default function App({
     useState("");
   const [isLiked, setIsLiked] = useState(false);
   const [isBookmarked, setIsBookmarked] = useState(false);
-  const [likedIds, setLikedIds] = useState<string[]>(() =>
-    JSON.parse(localStorage.getItem("linkable-liked") || "[]"),
-  );
-  // Diferente de likedIds (só local): favoritar um item persiste de verdade no
-  // servidor, dentro da coleção reservada "Itens Salvos" (ver
+  // Curtir um favorito persiste de verdade no servidor (CommunityItemLike,
+  // ver POST /api/community/items/:id/like) — igual a bookmarkedIds abaixo,
+  // por isso começa vazio e é carregado de /api/community/state, não do
+  // localStorage. Curtir a coleção inteira (ver toggleCollectionLiked) marca
+  // todos os favoritos dela aqui também, via cascata no servidor.
+  const [likedIds, setLikedIds] = useState<string[]>([]);
+  // Diferente de likedIds (era só local antes): favoritar um item persiste de
+  // verdade no servidor, dentro da coleção reservada "Itens Salvos" (ver
   // toggleBookmarkBookmarked) — por isso começa vazio e é carregado de
   // /api/saved-items, não do localStorage.
   const [bookmarkedIds, setBookmarkedIds] = useState<string[]>([]);
+  // Curtir/favoritar uma COLEÇÃO (diferente de likedIds/bookmarkedIds acima,
+  // que são de favorito individual) usa o mesmo mecanismo de "publicação" da
+  // aba Comunidade (CommunityPostLike/Save, ver server/community.mjs) — vale
+  // pra qualquer coleção, própria ou alheia, e é o que faz "curtir uma
+  // coleção marca todos os itens dela como curtidos" (curtir) e "salvar uma
+  // coleção alheia cria uma cópia editável em Suas coleções" (favoritar)
+  // funcionarem também a partir deste modal, não só do feed (ver
+  // Community.tsx, que usa a mesma rota).
+  const [communityPostLikes, setCommunityPostLikes] = useState<string[]>([]);
+  const [communityPostSaves, setCommunityPostSaves] = useState<string[]>([]);
+  // Dados completos dos favoritos ALHEIOS curtidos na Comunidade (ver GET
+  // /api/community/items/liked) — curtir nunca cria cópia (diferente de
+  // favoritar, que sempre cria em "Itens Salvos"), então sem isto o filtro
+  // "Com gostei" só via os curtidos que por acaso já eram do próprio dono.
+  const [likedForeignBookmarks, setLikedForeignBookmarks] = useState<
+    Bookmark[]
+  >([]);
   const [usage, setUsage] = useState<Record<string, number>>(() =>
     JSON.parse(localStorage.getItem("linkable-usage") || "{}"),
   );
@@ -1901,12 +2312,17 @@ export default function App({
   // toggleCollectionBehavior (que faria PATCH /collections/temporary-filter,
   // um id que não existe de verdade), então tem seu próprio estado local.
   const [filterExpanded, setFilterExpanded] = useState(true);
-  // Três abas na home: "collections" é a página atual (inalterada); "community"
-  // e "discover" ainda não existem — mostram só um aviso de "em construção" até
-  // serem desenvolvidas.
+  // Quatro abas na home: "collections" é a própria "Suas coleções"; "saved" é
+  // "Itens Salvos" (coleções alheias seguidas, ver loadSavedCollections
+  // abaixo); "community" e "discover" ainda não existem de verdade —
+  // "discover" só mostra um aviso de "em construção" até ser desenvolvida.
   const [homeTab, setHomeTab] = useState<
-    "collections" | "community" | "discover"
+    "collections" | "saved" | "community" | "discover"
   >("collections");
+  // Coleções alheias que o dono logado salvou (inteiras ou só alguns links) —
+  // sempre lidas ao vivo do servidor (ver GET /api/saved-collections), nunca
+  // uma cópia local: reflete edição de quem criou sem precisar recarregar.
+  const [savedCollections, setSavedCollections] = useState<Collection[]>([]);
   // Controla se as barras de ferramentas (da coleção e dos favoritos) aparecem ao
   // passar o mouse. Desligado por padrão para não atrapalhar quem só quer navegar.
   const [toolbarsEnabled, setToolbarsEnabled] = useState(false);
@@ -1946,6 +2362,7 @@ export default function App({
   const [profileError, setProfileError] = useState("");
   const [profileNotice, setProfileNotice] = useState("");
   const [nameDraft, setNameDraft] = useState("");
+  const [usernameDraft, setUsernameDraft] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
@@ -2002,14 +2419,29 @@ export default function App({
           ...collection.bookmarks,
           ...collection.groups.flatMap((group) => group.bookmarks),
         ].map((bookmark) => ({ ...bookmark, isPublic: collection.isPublic })));
-        let bookmarks = [...all];
+        // Curtir (diferente de favoritar) nunca cria cópia — um link ALHEIO
+        // curtido na Comunidade não existe em nenhuma coleção própria, então
+        // sem somar likedForeignBookmarks aqui ele nunca apareceria neste
+        // filtro, mesmo já persistido no servidor (ver GET
+        // /api/community/items/liked). Só entra no pool quando o filtro
+        // "Com gostei" está ativo, pra não vazar pros outros filtros.
+        const ownIds = new Set(all.map((bookmark) => bookmark.id));
+        const pool = activeFilters.includes("liked")
+          ? [
+              ...all,
+              ...likedForeignBookmarks.filter(
+                (bookmark) => !ownIds.has(bookmark.id),
+              ),
+            ]
+          : all;
+        let bookmarks = [...pool];
         if (activeFilters.includes("liked"))
           bookmarks = bookmarks.filter((bookmark) =>
             likedIds.includes(bookmark.id),
           );
         if (activeFilters.includes("bookmarked"))
           bookmarks = bookmarks.filter((bookmark) =>
-            bookmarkedIds.includes(bookmark.id),
+            bookmarkedIds.includes(bookmark.savedFromId || bookmark.id),
           );
         if (activeFilters.includes("public"))
           bookmarks = bookmarks.filter((bookmark) => bookmark.isPublic);
@@ -2112,26 +2544,47 @@ export default function App({
       setOwnerId(data.ownerId || "");
     } catch {}
   }
-  function toggleStoredId(
-    id: string,
-    current: string[],
-    update: React.Dispatch<React.SetStateAction<string[]>>,
-    storageKey: string,
-  ) {
-    const next = current.includes(id)
-      ? current.filter((value) => value !== id)
-      : [...current, id];
-    update(next);
-    localStorage.setItem(storageKey, JSON.stringify(next));
-    return next.includes(id);
-  }
   function registerUsage(id: string) {
     const next = { ...usage, [id]: (usage[id] || 0) + 1 };
     setUsage(next);
     localStorage.setItem("linkable-usage", JSON.stringify(next));
   }
-  function toggleBookmarkLiked(bookmark: Bookmark) {
-    toggleStoredId(bookmark.id, likedIds, setLikedIds, "linkable-liked");
+  // Curtir persiste no servidor (CommunityItemLike) — funciona igual pro
+  // próprio favorito ou pro de outro dono (perfil público, feed da
+  // Comunidade), já que o servidor só grava a interação, sem exigir posse.
+  async function toggleBookmarkLiked(bookmark: Bookmark): Promise<boolean | undefined> {
+    const wasLiked = likedIds.includes(bookmark.id);
+    setLikedIds((current) =>
+      wasLiked ? current.filter((id) => id !== bookmark.id) : [...current, bookmark.id],
+    );
+    try {
+      const result = await api(`/community/items/${encodeURIComponent(bookmark.id)}/like`, "POST");
+      setLikedIds((current) =>
+        result.active
+          ? current.includes(bookmark.id)
+            ? current
+            : [...current, bookmark.id]
+          : current.filter((id) => id !== bookmark.id),
+      );
+      // Curtir nunca cria cópia (diferente de favoritar): sem isto, um link
+      // ALHEIO recém-curtido só apareceria no filtro "Com gostei" depois de
+      // um reload (ver loadLikedItems) — aqui já se tem os dados completos
+      // em mãos, então atualiza a lista na hora.
+      setLikedForeignBookmarks((current) =>
+        result.active
+          ? current.some((b) => b.id === bookmark.id)
+            ? current
+            : [...current, bookmark]
+          : current.filter((b) => b.id !== bookmark.id),
+      );
+      return result.active;
+    } catch (e) {
+      setLikedIds((current) =>
+        wasLiked ? [...current, bookmark.id] : current.filter((id) => id !== bookmark.id),
+      );
+      setNotice((e as Error).message);
+      return undefined;
+    }
   }
   // Lista de ids já favoritados pelo VISITANTE logado (sempre o próprio dono
   // da sessão, nunca de quem está sendo visitado) — carregada uma vez ao
@@ -2145,39 +2598,76 @@ export default function App({
       setBookmarkedIds(data.savedFromIds || []);
     } catch {}
   }
-  // Favoritar um item específico (o coração de cada favicon) cria ou remove
-  // uma CÓPIA dele dentro da coleção reservada "Itens Salvos" do próprio
-  // visitante — funciona tanto pros favoritos que ele mesmo criou quanto pros
-  // públicos de outro dono (perfil compartilhado, ?perfil=), já que o
-  // servidor recebe os dados do favorito direto do card que o usuário está
-  // vendo, sem precisar que ele seja dono do original (ver POST
+  // Dados da aba "Itens Salvos" — sempre lidos ao vivo do servidor (ver GET
+  // /api/saved-collections), nunca guardados como cópia local: refeito a cada
+  // troca de aba/carregamento pra refletir edições recentes de quem criou.
+  async function loadSavedCollections() {
+    try {
+      const data = await api("/saved-collections");
+      setSavedCollections(data.collections || []);
+    } catch {}
+  }
+  // Remove uma referência inteira (coleção alheia seguida, cheia ou parcial)
+  // dos salvos — botão "Remover dos salvos" em CollectionRow, só aparece na
+  // aba "Itens Salvos". Diferente de desfavoritar um item avulso (coração),
+  // que só tira um link por vez quando a referência é parcial.
+  async function unsaveCollection(collectionId: string) {
+    setSavedCollections((current) => current.filter((c) => c.id !== collectionId));
+    try {
+      await api(`/saved-collections/${encodeURIComponent(collectionId)}`, "DELETE");
+      void loadSavedItems();
+    } catch (e) {
+      setNotice((e as Error).message);
+      void loadSavedCollections();
+    }
+  }
+  // Expandir/recolher um card de "Itens Salvos" não pode persistir via PATCH
+  // /collections/:id (a coleção nem é do dono logado) — fica só de exibição,
+  // local a esta sessão, igual ao expandir/recolher do "Resultados do filtro"
+  // (ver filterExpanded acima).
+  function toggleSavedCollectionBehavior(collection: Collection) {
+    setSavedCollections((current) =>
+      current.map((c) =>
+        c.id === collection.id
+          ? { ...c, behavior: c.behavior === "expansive" ? "fixed" : "expansive" }
+          : c,
+      ),
+    );
+  }
+  // Favoritar um item específico (o coração de cada favicon) liga/desliga uma
+  // REFERÊNCIA a ele na aba "Itens Salvos" do próprio visitante — nunca uma
+  // cópia — funciona tanto pros favoritos que ele mesmo criou (BookmarkSaveMark,
+  // sem virar referência) quanto pros públicos de outro dono (perfil
+  // compartilhado, ?perfil=), já que o servidor só precisa do id do favorito,
+  // sem exigir que o visitante seja dono do original (ver POST
   // /api/saved-items/:sourceId). Devolve o novo estado (ativo/inativo) pra
   // quem chamou poder refletir na hora, sem esperar um segundo round-trip.
   async function toggleBookmarkBookmarked(
-    bookmark: Pick<Bookmark, "id" | "name" | "url" | "description" | "favicon" | "color">,
+    bookmark: Pick<
+      Bookmark,
+      "id" | "name" | "url" | "description" | "favicon" | "color" | "savedFromId"
+    >,
   ): Promise<boolean | undefined> {
+    // Se "bookmark" já vem de dentro da própria aba "Itens Salvos", o alvo do
+    // toggle é o original (savedFromId) — não o id do favorito de verdade
+    // renderizado ali, que já É o original nesse caso (savedFromId fica
+    // undefined), então cai direto em bookmark.id de qualquer forma.
+    const sourceId = bookmark.savedFromId || bookmark.id;
     try {
-      const result = await api(
-        `/saved-items/${encodeURIComponent(bookmark.id)}`,
-        "POST",
-        {
-          name: bookmark.name,
-          url: bookmark.url,
-          description: bookmark.description,
-          favicon: bookmark.favicon,
-          color: bookmark.color,
-        },
-      );
+      const result = await api(`/saved-items/${encodeURIComponent(sourceId)}`, "POST");
       setBookmarkedIds((current) =>
         result.active
-          ? [...current, bookmark.id]
-          : current.filter((id) => id !== bookmark.id),
+          ? [...current, sourceId]
+          : current.filter((id) => id !== sourceId),
       );
-      // Só recarrega "Suas coleções" quando é a própria — favoritar algo
-      // enquanto se visita o perfil de outra pessoa não deve reconsultar as
-      // coleções PÚBLICAS dela (readOnly), já que "Itens Salvos" vive na
-      // conta do visitante, não na de quem está sendo visitado.
-      if (!readOnly) void silentReload();
+      // Só recarrega "Suas coleções"/"Itens Salvos" quando é a própria sessão
+      // — favoritar algo enquanto se visita o perfil de outra pessoa não deve
+      // reconsultar as coleções PÚBLICAS dela (readOnly), já que "Itens
+      // Salvos" vive na conta do visitante, não na de quem está sendo visitado.
+      if (!readOnly) {
+        void silentReload();
+        void loadSavedCollections();
+      }
       return result.active;
     } catch (e) {
       setNotice((e as Error).message);
@@ -2187,6 +2677,179 @@ export default function App({
   function shareBookmark(bookmark: Bookmark) {
     void navigator.clipboard?.writeText(bookmark.url);
     setNotice("Link copiado.");
+    // Fogo-e-esqueça: só alimenta a contagem/relevância de compartilhamentos
+    // (ver POST /api/community/items/:id/share em server/community.mjs) — o
+    // link já foi copiado acima, então uma falha aqui não precisa de aviso.
+    void api(`/community/items/${encodeURIComponent(bookmark.id)}/share`, "POST").catch(() => {});
+  }
+  async function loadCommunityState() {
+    try {
+      const data = await api("/community/state");
+      setCommunityPostLikes(data.likedPostIds || []);
+      setCommunityPostSaves(data.savedPostIds || []);
+      setLikedIds(data.likedItemIds || []);
+      setFollowedAuthorIds(data.followedAuthorIds || []);
+      setBlockedAuthorIds(data.blockedAuthorIds || []);
+    } catch {}
+  }
+  async function loadLikedItems() {
+    try {
+      const data = await api("/community/items/liked");
+      setLikedForeignBookmarks(data.items || []);
+    } catch {}
+  }
+  // Seguir/deixar de seguir o dono do perfil público sendo visitado (ver
+  // seção "public-profile-header" mais abaixo) — mesmo endpoint usado pelo
+  // botão "Seguir" do cartão de perfil da Comunidade (Community.tsx).
+  // Atualiza a contagem de seguidores exibida de forma otimista, desfazendo
+  // os dois lados em caso de erro.
+  async function toggleFollowViewed() {
+    if (!sharedId || relationBusy) return;
+    const wasFollowing = followedAuthorIds.includes(sharedId);
+    setRelationBusy(true);
+    setFollowedAuthorIds((current) =>
+      wasFollowing ? current.filter((id) => id !== sharedId) : [...current, sharedId],
+    );
+    setViewedProfile((current) =>
+      current
+        ? { ...current, followerCount: current.followerCount + (wasFollowing ? -1 : 1) }
+        : current,
+    );
+    try {
+      await api(`/community/users/${encodeURIComponent(sharedId)}/follow`, "POST");
+    } catch (e) {
+      setFollowedAuthorIds((current) =>
+        wasFollowing ? [...current, sharedId] : current.filter((id) => id !== sharedId),
+      );
+      setViewedProfile((current) =>
+        current
+          ? { ...current, followerCount: current.followerCount + (wasFollowing ? 1 : -1) }
+          : current,
+      );
+      setNotice((e as Error).message);
+    } finally {
+      setRelationBusy(false);
+    }
+  }
+  // Bloquear a partir do próprio perfil público (menu "⋮" no cabeçalho) —
+  // mesmo endpoint/efeito do bloqueio feito a partir do feed da Comunidade:
+  // esconde as publicações e comentários desse autor lá (ver blockedAuthorIds
+  // em Community.tsx), só que iniciado daqui.
+  async function toggleBlockViewed() {
+    if (!sharedId || relationBusy) return;
+    const wasBlocked = blockedAuthorIds.includes(sharedId);
+    setRelationBusy(true);
+    setBlockedAuthorIds((current) =>
+      wasBlocked ? current.filter((id) => id !== sharedId) : [...current, sharedId],
+    );
+    try {
+      await api(`/community/users/${encodeURIComponent(sharedId)}/block`, "POST");
+      setNotice(wasBlocked ? "Conta desbloqueada." : "Conta bloqueada.");
+      setIsProfileActionsMenuOpen(false);
+    } catch (e) {
+      setBlockedAuthorIds((current) =>
+        wasBlocked ? [...current, sharedId] : current.filter((id) => id !== sharedId),
+      );
+      setNotice((e as Error).message);
+    } finally {
+      setRelationBusy(false);
+    }
+  }
+  function copyPublicProfileLink() {
+    if (!sharedId) return;
+    void navigator.clipboard
+      ?.writeText(`${location.origin}/?perfil=${encodeURIComponent(sharedId)}`)
+      .then(() => setNotice("Link do perfil copiado."))
+      .catch(() => setNotice("Não foi possível copiar o link."));
+    setIsProfileActionsMenuOpen(false);
+  }
+  // Troca de perfil dentro da mesma aba/instância do app, sem recarregar a
+  // página — pushState atualiza a URL (pra continuar copiável/compartilhável
+  // e funcionar com voltar/avançar do navegador, ver o listener de
+  // "popstate" abaixo) e "sharedId" vira estado pra disparar o re-fetch do
+  // perfil (ver o useEffect de "sharedId" logo depois do de montagem).
+  function navigateToProfile(
+    id: string,
+    fallback?: { name?: string; username?: string; color?: string; avatar?: string },
+  ) {
+    const params = new URLSearchParams({ perfil: id });
+    if (fallback?.name) params.set("nome", fallback.name);
+    if (fallback?.username) params.set("usuario", fallback.username);
+    if (fallback?.color) params.set("cor", fallback.color);
+    if (fallback?.avatar) params.set("avatar", fallback.avatar);
+    history.pushState({}, "", `/?${params.toString()}`);
+    setSharedId(id);
+    setIsEditingProfile(false);
+    cancelBannerDraft();
+  }
+  function navigateHome() {
+    history.pushState({}, "", "/");
+    setSharedId(null);
+    setIsEditingProfile(false);
+    cancelBannerDraft();
+  }
+  // Deixa cliques com modificador (abrir em aba nova, aba em segundo plano
+  // etc.) seguirem o comportamento padrão do navegador pelo href de verdade
+  // — só um clique simples do botão esquerdo é interceptado pra navegar sem
+  // recarregar.
+  function handleProfileNav(
+    id: string,
+    fallback: { name?: string; username?: string; color?: string; avatar?: string } | undefined,
+    e: React.MouseEvent,
+  ) {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)
+      return;
+    e.preventDefault();
+    navigateToProfile(id, fallback);
+  }
+  function handleHomeNav(e: React.MouseEvent) {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)
+      return;
+    e.preventDefault();
+    navigateHome();
+  }
+  // Curtir uma coleção marca todos os favoritos dela como curtidos também
+  // (cascata feita no servidor, ver POST /api/community/posts/:id/like) —
+  // funciona pra coleção própria ou alheia (só a relevância distingue os
+  // dois casos).
+  async function toggleCollectionLiked(collectionId: string) {
+    const wasLiked = communityPostLikes.includes(collectionId);
+    setCommunityPostLikes((current) =>
+      wasLiked ? current.filter((id) => id !== collectionId) : [...current, collectionId],
+    );
+    setIsLiked(!wasLiked);
+    try {
+      await api(`/community/posts/${encodeURIComponent(collectionId)}/like`, "POST");
+    } catch (e) {
+      setCommunityPostLikes((current) =>
+        wasLiked ? [...current, collectionId] : current.filter((id) => id !== collectionId),
+      );
+      setIsLiked(wasLiked);
+      setNotice((e as Error).message);
+    }
+  }
+  // Favoritar a PRÓPRIA coleção só marca os itens dela como salvos (sem
+  // referência nenhuma); favoritar a de OUTRO dono passa a "seguir" ela por
+  // completo na aba "Itens Salvos" — os dois casos são resolvidos no servidor
+  // (ver POST /api/community/posts/:id/save), por isso recarrega essa aba nos
+  // dois sentidos (salvar cria a referência, desfazer pode apagá-la).
+  async function toggleCollectionSaved(collectionId: string) {
+    const wasSaved = communityPostSaves.includes(collectionId);
+    setCommunityPostSaves((current) =>
+      wasSaved ? current.filter((id) => id !== collectionId) : [...current, collectionId],
+    );
+    setIsBookmarked(!wasSaved);
+    try {
+      await api(`/community/posts/${encodeURIComponent(collectionId)}/save`, "POST");
+      void loadSavedCollections();
+      if (!wasSaved) void silentReload();
+    } catch (e) {
+      setCommunityPostSaves((current) =>
+        wasSaved ? [...current, collectionId] : current.filter((id) => id !== collectionId),
+      );
+      setIsBookmarked(wasSaved);
+      setNotice((e as Error).message);
+    }
   }
   async function toggleCollectionBehavior(collection: Collection) {
     try {
@@ -2266,13 +2929,19 @@ export default function App({
     ids.splice(targetIndex, 0, sourceId);
     void reorderCollections(ids);
   }
-  async function createGroup(collectionId: string, bookmarkIds: string[]) {
+  async function createGroup(
+    collectionId: string,
+    bookmarkIds: string[],
+    parentId?: string | null,
+  ) {
     try {
       const created = await api("/groups", "POST", {
         collectionId,
         name: "Novo grupo",
         color: "#8b5cf6",
+        showName: true,
         bookmarkIds,
+        parentId: parentId || null,
       });
       await silentReload();
       return created as BookmarkGroup;
@@ -2336,6 +3005,7 @@ export default function App({
       description: string;
       showName: boolean;
       shape: string | null;
+      isPublic: boolean;
     },
   ) {
     try {
@@ -2345,10 +3015,32 @@ export default function App({
       setNotice((e as Error).message);
     }
   }
+  async function refreshCollectionIcons(collectionId: string) {
+    try {
+      const { total, updated } = (await api(
+        `/collections/${collectionId}/refresh-icons`,
+        "POST",
+      )) as { total: number; updated: number };
+      setNotice(
+        updated
+          ? t("collection_refresh_icons_done", { updated, total })
+          : t("collection_refresh_icons_none"),
+      );
+      if (updated) await silentReload();
+    } catch (e) {
+      setNotice((e as Error).message);
+    }
+  }
   async function deleteGroup(groupId: string) {
     try {
-      await api(`/groups/${groupId}`, "DELETE");
-      setNotice("Grupo excluído. Os favoritos voltaram para a coleção.");
+      const data = (await api(`/groups/${groupId}`, "DELETE")) as {
+        returnedTo?: { kind: "section" | "collection"; name?: string };
+      } | null;
+      setNotice(
+        data?.returnedTo?.kind === "section"
+          ? t("group_deleted_to_section", { name: data.returnedTo.name || "" })
+          : t("group_deleted_to_collection"),
+      );
       await silentReload();
     } catch (e) {
       setNotice((e as Error).message);
@@ -2377,7 +3069,51 @@ export default function App({
   useEffect(() => {
     void reload();
     void loadSavedItems();
+    void loadSavedCollections();
+    void loadCommunityState();
+    void loadLikedItems();
   }, []);
+  // Navegar entre perfis (ou entre um perfil e o início) agora acontece sem
+  // recarregar a página (ver navigateToProfile/navigateHome) — "sharedId" é
+  // que dispara o re-fetch do perfil visitado. A primeira execução
+  // (montagem) já é coberta pelo efeito acima, então é pulada aqui.
+  const didMountSharedId = useRef(false);
+  useEffect(() => {
+    if (!didMountSharedId.current) {
+      didMountSharedId.current = true;
+      return;
+    }
+    void reload();
+  }, [sharedId]);
+  // pushState (usado por navigateToProfile/navigateHome) não dispara nenhum
+  // evento sozinho — sem este listener, voltar/avançar pelo navegador mudaria
+  // a URL mas deixaria a tela presa no perfil visto antes.
+  useEffect(() => {
+    function onPopState() {
+      setSharedId(new URLSearchParams(location.search).get("perfil"));
+      setIsEditingProfile(false);
+      cancelBannerDraft();
+    }
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+  // Trocar de aba (Suas coleções/Comunidade/Descobrir) não muda a URL nem
+  // remonta a página "Suas coleções", então sem isto um favorito salvo por
+  // fora (ex: pela extensão) enquanto o visitante estava em outra aba só
+  // apareceria depois de um F5 manual. A primeira execução (montagem) já é
+  // coberta pelo efeito acima, então é pulada aqui.
+  const didMountHomeTab = useRef(false);
+  useEffect(() => {
+    if (!didMountHomeTab.current) {
+      didMountHomeTab.current = true;
+      return;
+    }
+    void silentReload();
+    void loadSavedItems();
+    void loadSavedCollections();
+    void loadCommunityState();
+    void loadLikedItems();
+  }, [homeTab]);
   useEffect(() => {
     function refreshIfVisible() {
       if (document.visibilityState === "visible") void silentReload();
@@ -2426,6 +3162,7 @@ export default function App({
   useEffect(() => {
     if (isProfileOpen) {
       setNameDraft(profile?.displayName || profile?.name || "");
+      setUsernameDraft(profile?.username || "");
       setCurrentPassword("");
       setNewPassword("");
       setDeletePassword("");
@@ -2450,6 +3187,22 @@ export default function App({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [isAccountMenuOpen]);
+  useEffect(() => {
+    if (!isProfileActionsMenuOpen) return;
+    function handlePointerDown(e: MouseEvent) {
+      if (!profileActionsMenu.current?.contains(e.target as Node))
+        setIsProfileActionsMenuOpen(false);
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setIsProfileActionsMenuOpen(false);
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isProfileActionsMenuOpen]);
   useEffect(() => {
     if (!notice) return;
     const timeout = setTimeout(() => setNotice(""), 4500);
@@ -2512,8 +3265,18 @@ export default function App({
     setLockedBookmarkCollectionId(
       type === "bookmark" ? lockedCollectionId : "",
     );
-    setIsLiked(Boolean(data?.id && likedIds.includes(data.id)));
-    setIsBookmarked(Boolean(data?.id && bookmarkedIds.includes(data.id)));
+    setIsLiked(
+      Boolean(
+        data?.id &&
+          (type === "collection" ? communityPostLikes : likedIds).includes(data.id),
+      ),
+    );
+    setIsBookmarked(
+      Boolean(
+        data?.id &&
+          (type === "collection" ? communityPostSaves : bookmarkedIds).includes(data.id),
+      ),
+    );
     setDraft({
       ...blank,
       collectionId: collections[0]?.id || "",
@@ -2795,12 +3558,23 @@ export default function App({
   function exportBookmarks() {
     window.location.href = "/api/export";
   }
+  // "viewedProfile" é um estado separado de "profile" (dados de quem está
+  // sendo visitado vs. a própria conta) — sem esta sincronização, editar o
+  // avatar/capa na própria página de perfil só refletiria ali depois de um F5.
+  function syncViewedProfileFromAccount(user: Account) {
+    setViewedProfile((current) =>
+      current && sharedId === user.id
+        ? { ...current, avatar: user.avatar, banner: user.banner }
+        : current,
+    );
+  }
   async function saveAvatar(avatar: string) {
     setProfileBusy(true);
     setProfileError("");
     try {
       const data = await api("/auth/avatar", "POST", { avatar });
       setProfile(data.user);
+      syncViewedProfileFromAccount(data.user);
     } catch (e) {
       setProfileError((e as Error).message);
     } finally {
@@ -2809,14 +3583,57 @@ export default function App({
   }
   async function uploadAvatar(file?: File) {
     if (!file) return;
-    if (file.size > 2 * 1024 * 1024) {
-      setProfileError("Escolha uma imagem de até 2 MB.");
+    // 512px: bem acima do que o avatar chega a mostrar (84px na própria
+    // página de perfil, o maior uso) e do que o servidor guarda (256x256,
+    // ver imageData) — sobra pra tela retina sem carregar mais que isso.
+    try {
+      await saveAvatar(await downscaleImage(file, 512));
+    } catch (e) {
+      setProfileError((e as Error).message);
+    }
+  }
+  async function saveBanner(banner: string) {
+    setProfileBusy(true);
+    setProfileError("");
+    try {
+      const data = await api("/auth/banner", "POST", { banner });
+      setProfile(data.user);
+      syncViewedProfileFromAccount(data.user);
+    } catch (e) {
+      setProfileError((e as Error).message);
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+  // Escolher o arquivo só abre o slider de reposicionamento (bannerDraft) —
+  // o upload de verdade só acontece em confirmBannerDraft, depois que a
+  // pessoa escolhe qual parte da imagem aparece.
+  function selectBannerFile(file?: File) {
+    if (!file) return;
+    if (file.size > MAX_SOURCE_BYTES) {
+      setProfileError("Escolha uma imagem de até 25 MB.");
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => void saveAvatar(String(reader.result));
-    reader.onerror = () => setProfileError("Não foi possível ler o arquivo.");
-    reader.readAsDataURL(file);
+    setBannerDraft((current) => {
+      if (current) URL.revokeObjectURL(current.url);
+      return { file, url: URL.createObjectURL(file), offsetY: 50 };
+    });
+  }
+  function cancelBannerDraft() {
+    setBannerDraft((current) => {
+      if (current) URL.revokeObjectURL(current.url);
+      return null;
+    });
+  }
+  async function confirmBannerDraft() {
+    if (!bannerDraft) return;
+    try {
+      const cropped = await cropBannerImage(bannerDraft.file, bannerDraft.offsetY);
+      await saveBanner(cropped);
+      cancelBannerDraft();
+    } catch (e) {
+      setProfileError((e as Error).message);
+    }
   }
   async function saveName(e: React.FormEvent) {
     e.preventDefault();
@@ -2826,7 +3643,23 @@ export default function App({
     try {
       const data = await api("/auth/me", "PATCH", { displayName: nameDraft });
       setProfile(data.user);
-      setProfileNotice("Nome atualizado.");
+      setProfileNotice(t("account_display_name_saved"));
+    } catch (e) {
+      setProfileError((e as Error).message);
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+  async function saveUsername(e: React.FormEvent) {
+    e.preventDefault();
+    setProfileBusy(true);
+    setProfileError("");
+    setProfileNotice("");
+    try {
+      const data = await api("/auth/me", "PATCH", { username: usernameDraft });
+      setProfile(data.user);
+      setUsernameDraft(data.user.username || "");
+      setProfileNotice(t("account_username_saved"));
     } catch (e) {
       setProfileError((e as Error).message);
     } finally {
@@ -2964,10 +3797,21 @@ export default function App({
   const publicProfileName = viewedProfile?.name || sharedFallback.name || "Usuário";
   const publicProfileUsername = viewedProfile?.username || sharedFallback.username;
   const publicProfileAvatar = viewedProfile?.avatar || sharedFallback.avatar;
+  // Sem fallback de sharedFallback: autores fictícios do feed da Comunidade
+  // (ver communityMock.ts) não têm capa, só nome/usuário/cor/avatar.
+  const publicProfileBanner = viewedProfile?.banner || "";
+  // Usado dentro do cabeçalho do próprio perfil público (botão "Editar
+  // Perfil" só aparece pro dono).
+  const isSelf = !!profile && profile.id === sharedId;
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="/" aria-label="Linkable, início">
+        <a
+          className="brand"
+          href="/"
+          aria-label="Linkable, início"
+          onClick={handleHomeNav}
+        >
           <img
             src={theme === "dark" ? "/linkable-logotype-2.png" : "/linkable-logotype-1.png"}
             alt="Linkable"
@@ -2998,17 +3842,6 @@ export default function App({
           </form>
         )}
         <div className="header-actions">
-          <button
-            type="button"
-            className="theme-toggle"
-            aria-label={
-              theme === "dark" ? "Ativar tema claro" : "Ativar tema escuro"
-            }
-            title={theme === "dark" ? "Tema claro" : "Tema escuro"}
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-          >
-            {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-          </button>
           {profile && (
             <div className="account-menu" ref={accountMenu}>
               <button
@@ -3043,7 +3876,38 @@ export default function App({
                       }}
                     >
                       <User size={16} />
-                      Conta
+                      {t("account")}
+                    </button>
+                    <a
+                      href={`/?perfil=${profile?.id ?? ""}`}
+                      role="menuitem"
+                      onClick={(e) => {
+                        setIsAccountMenuOpen(false);
+                        if (!profile?.id) return;
+                        // Sai da página "Conta" (se estiver aberta) — senão
+                        // ela continua cobrindo o perfil público no <main>.
+                        if (!e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey)
+                          setIsProfileOpen(false);
+                        handleProfileNav(profile.id, undefined, e);
+                      }}
+                    >
+                      <CircleUser size={16} />
+                      {t("profile")}
+                    </a>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setIsAccountMenuOpen(false);
+                        setTheme(theme === "dark" ? "light" : "dark");
+                      }}
+                    >
+                      {theme === "dark" ? (
+                        <Sun size={16} />
+                      ) : (
+                        <Moon size={16} />
+                      )}
+                      Tema
                     </button>
                     {onLogout && (
                       <button
@@ -3066,6 +3930,14 @@ export default function App({
         </div>
       </header>
       <main>
+        {!isProfileOpen &&
+          !loading &&
+          !connectionError &&
+          (readOnly || homeTab === "collections" ? (
+            <CollectionDots collections={displayedCollections} />
+          ) : homeTab === "saved" ? (
+            <CollectionDots collections={savedCollections} />
+          ) : null)}
         {isProfileOpen ? (
           <section className="account-page" aria-labelledby="profile-title">
             <div className="modal-content">
@@ -3079,7 +3951,7 @@ export default function App({
                 >
                   <ChevronLeft size={20} />
                 </button>
-                <h2 id="profile-title">Perfil</h2>
+                <h2 id="profile-title">{t("account")}</h2>
               </div>
               <div className="profile-section">
                 <h3>Foto de perfil</h3>
@@ -3117,9 +3989,10 @@ export default function App({
                 <p className="help">PNG, JPG, WebP ou GIF. Até 2 MB.</p>
               </div>
               <form className="profile-section" onSubmit={saveName}>
-                <h3>Nome</h3>
+                <h3>{t("account_display_name")}</h3>
                 <label>
                   <input
+                    aria-label={t("account_display_name")}
                     value={nameDraft}
                     onChange={(e) => setNameDraft(e.target.value)}
                     required
@@ -3127,12 +4000,39 @@ export default function App({
                     disabled={profileBusy}
                   />
                 </label>
+                <p className="help">{t("account_display_name_help")}</p>
                 <button
                   className="primary"
                   type="submit"
                   disabled={profileBusy}
                 >
-                  {profileBusy ? "Salvando…" : "Salvar nome"}
+                  {profileBusy ? t("account_saving") : t("account_display_name_save")}
+                </button>
+              </form>
+              <form className="profile-section" onSubmit={saveUsername}>
+                <h3>{t("account_username")}</h3>
+                <label>
+                  <input
+                    aria-label={t("account_username")}
+                    value={usernameDraft}
+                    onChange={(e) => setUsernameDraft(e.target.value.toLowerCase())}
+                    required
+                    minLength={3}
+                    maxLength={32}
+                    pattern="[a-z0-9_.\-]{3,32}"
+                    autoCapitalize="none"
+                    autoComplete="username"
+                    spellCheck={false}
+                    disabled={profileBusy}
+                  />
+                </label>
+                <p className="help">{t("account_username_help")}</p>
+                <button
+                  className="primary"
+                  type="submit"
+                  disabled={profileBusy || usernameDraft === (profile?.username || "")}
+                >
+                  {profileBusy ? t("account_saving") : t("account_username_save")}
                 </button>
               </form>
               <div className="profile-section">
@@ -3336,20 +4236,190 @@ export default function App({
           </section>
         ) : (
           <>
-            {readOnly && (
-              <section className="public-profile-header">
-                <div className="public-profile-banner" />
-                <div className="public-profile-main">
-                  <span
-                    className="public-profile-avatar"
-                    style={{ "--orb": sharedFallback.color || "#9aa0a6" } as React.CSSProperties}
-                  >
-                    {publicProfileAvatar ? (
-                      <img src={publicProfileAvatar} alt="" />
+            {readOnly && (() => {
+              const isFollowing = !!sharedId && followedAuthorIds.includes(sharedId);
+              const isBlocked = !!sharedId && blockedAuthorIds.includes(sharedId);
+              const canEditProfile = isSelf && isEditingProfile;
+              return (
+                <section className="public-profile-header">
+                  <div className="public-profile-banner">
+                    {bannerDraft ? (
+                      <>
+                        <img
+                          src={bannerDraft.url}
+                          alt=""
+                          style={{ objectPosition: `50% ${bannerDraft.offsetY}%` }}
+                        />
+                        <div className="public-profile-banner-adjust">
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            value={bannerDraft.offsetY}
+                            aria-label={t("profile_banner_position")}
+                            onChange={(e) => {
+                              const offsetY = Number(e.target.value);
+                              setBannerDraft((current) => (current ? { ...current, offsetY } : current));
+                            }}
+                          />
+                          <div className="public-profile-banner-adjust-actions">
+                            <button
+                              type="button"
+                              className="secondary"
+                              disabled={profileBusy}
+                              onClick={cancelBannerDraft}
+                            >
+                              {t("profile_banner_cancel")}
+                            </button>
+                            <button
+                              type="button"
+                              className="primary"
+                              disabled={profileBusy}
+                              onClick={() => void confirmBannerDraft()}
+                            >
+                              {t("profile_banner_save")}
+                            </button>
+                          </div>
+                        </div>
+                      </>
                     ) : (
-                      publicProfileName.slice(0, 1).toUpperCase()
+                      <>
+                        {publicProfileBanner && <img src={publicProfileBanner} alt="" />}
+                        {canEditProfile && (
+                          <label className="public-profile-banner-edit">
+                            <Camera size={16} />
+                            {t("profile_edit_banner")}
+                            <input
+                              type="file"
+                              accept="image/png,image/jpeg,image/webp,image/gif"
+                              disabled={profileBusy}
+                              onChange={(e) => selectBannerFile(e.target.files?.[0])}
+                            />
+                          </label>
+                        )}
+                      </>
                     )}
-                  </span>
+                  </div>
+                  <div className={`public-profile-main${profile ? " public-profile-main-actions" : ""}`}>
+                    <span
+                      className="public-profile-avatar"
+                      style={{ "--orb": sharedFallback.color || "#9aa0a6" } as React.CSSProperties}
+                    >
+                      {publicProfileAvatar ? (
+                        <img src={publicProfileAvatar} alt="" />
+                      ) : (
+                        publicProfileName.slice(0, 1).toUpperCase()
+                      )}
+                      {canEditProfile && (
+                        <label
+                          className="public-profile-avatar-edit"
+                          aria-label={t("profile_edit_avatar")}
+                          title={t("profile_edit_avatar")}
+                        >
+                          <Camera size={16} />
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp,image/gif"
+                            disabled={profileBusy}
+                            onChange={(e) => void uploadAvatar(e.target.files?.[0])}
+                          />
+                        </label>
+                      )}
+                    </span>
+                    {profile && isSelf && (
+                      <div className="public-profile-actions public-profile-actions-top">
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() => setIsEditingProfile((value) => !value)}
+                        >
+                          {isEditingProfile ? t("profile_edit_done") : t("profile_edit")}
+                        </button>
+                      </div>
+                    )}
+                    {profile && !isSelf && (
+                      <div className="public-profile-actions public-profile-actions-top">
+                        <button
+                          type="button"
+                          className="secondary"
+                          disabled
+                          title="Mensagens diretas ainda não estão disponíveis"
+                        >
+                          <MessageCircle size={15} />
+                          Mensagem
+                        </button>
+                        <button
+                          type="button"
+                          className={isFollowing ? "secondary" : "primary"}
+                          disabled={relationBusy}
+                          onClick={toggleFollowViewed}
+                        >
+                          {isFollowing ? "Seguindo" : "Seguir"}
+                        </button>
+                      </div>
+                    )}
+                    {profile && !isSelf && (
+                      <div className="public-profile-actions-top public-profile-menu-standalone">
+                        <div className="account-menu public-profile-menu" ref={profileActionsMenu}>
+                          <button
+                            type="button"
+                            className="icon-button"
+                            aria-label="Mais opções sobre esta conta"
+                            aria-expanded={isProfileActionsMenuOpen}
+                            onClick={() => setIsProfileActionsMenuOpen((open) => !open)}
+                          >
+                            <MoreVertical size={18} />
+                          </button>
+                          {isProfileActionsMenuOpen && (
+                            <div
+                              className="comment-menu-panel public-profile-menu-panel"
+                              role="menu"
+                            >
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="menu-danger"
+                                disabled
+                                title="Em breve"
+                              >
+                                <Flag size={15} />
+                                Denunciar conta
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                  setIsProfileActionsMenuOpen(false);
+                                  setIsAboutOpen(true);
+                                }}
+                              >
+                                <Info size={15} />
+                                Sobre esta conta
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={copyPublicProfileLink}
+                              >
+                                <Link2 size={15} />
+                                Copiar link do perfil
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="menu-danger"
+                                disabled={relationBusy}
+                                onClick={toggleBlockViewed}
+                              >
+                                <Ban size={15} />
+                                {isBlocked ? "Desbloquear" : "Bloquear"}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <div className="public-profile-info">
                     <h2>{publicProfileName}</h2>
                     {publicProfileUsername && (
@@ -3361,15 +4431,19 @@ export default function App({
                         ? `Entrou em ${new Date(viewedProfile.memberSince).toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}`
                         : "Conta de demonstração"}
                     </span>
-                    <span className="public-profile-meta">
-                      <Users size={14} />
-                      <strong>{viewedProfile?.followerCount ?? 0}</strong>{" "}
-                      {viewedProfile?.followerCount === 1 ? "seguidor" : "seguidores"}
-                    </span>
+                    <div className="public-profile-stats">
+                      <span>
+                        <strong>{viewedProfile?.followingCount ?? 0}</strong> Seguindo
+                      </span>
+                      <span>
+                        <strong>{viewedProfile?.followerCount ?? 0}</strong>{" "}
+                        {viewedProfile?.followerCount === 1 ? "Seguidor" : "Seguidores"}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              </section>
-            )}
+                </section>
+              );
+            })()}
             <div className="sticky-header">
               {!readOnly && (
                 <div className="home-tabs" role="tablist" aria-label="Seções da página inicial">
@@ -3381,6 +4455,15 @@ export default function App({
                     onClick={() => setHomeTab("collections")}
                   >
                     Suas coleções
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={homeTab === "saved"}
+                    className={homeTab === "saved" ? "active" : undefined}
+                    onClick={() => setHomeTab("saved")}
+                  >
+                    {t("home_tab_saved")}
                   </button>
                   <button
                     type="button"
@@ -3536,9 +4619,72 @@ export default function App({
               </div>
               )}
             </div>
-            {homeTab === "community" && !readOnly ? (
+            {homeTab === "saved" && !readOnly ? (
               <section className="library">
-                <CommunityFeed notify={setNotice} profile={profile} />
+                <div className="collections-frame">
+                  {savedCollections.length ? (
+                    savedCollections.map((c) => (
+                      <CollectionRow
+                        key={c.id}
+                        collection={c}
+                        readOnly
+                        toolbarsEnabled={toolbarsEnabled}
+                        likedIds={likedIds}
+                        bookmarkedIds={bookmarkedIds}
+                        edit={() => {}}
+                        remove={() => {}}
+                        add={() => {}}
+                        editBookmark={() => {}}
+                        removeBookmark={() => {}}
+                        openBookmark={(bookmark) => registerUsage(bookmark.id)}
+                        toggleLiked={toggleBookmarkLiked}
+                        toggleBookmarked={toggleBookmarkBookmarked}
+                        shareBookmark={shareBookmark}
+                        toggleBehavior={toggleSavedCollectionBehavior}
+                        createGroup={async () => null}
+                        moveToGroup={async () => {}}
+                        reorderBookmarks={async () => {}}
+                        renameGroup={async () => {}}
+                        deleteGroup={async () => {}}
+                        sectionsBulkAction={null}
+                        dragHandle={{
+                          dragging: false,
+                          dragOver: false,
+                          onDragStart: () => {},
+                          onDragOver: () => {},
+                          onDragLeave: () => {},
+                          onDrop: () => {},
+                          onDragEnd: () => {},
+                        }}
+                        onUnsave={() => void unsaveCollection(c.id)}
+                      />
+                    ))
+                  ) : (
+                    <div className="empty-state">
+                      <div className="empty-art">
+                        <span className="mini-orb">
+                          <Globe2 size={23} />
+                        </span>
+                        <span className="main-orb">
+                          <BookmarkIcon size={32} />
+                        </span>
+                        <span className="mini-orb">
+                          <Link2 size={22} />
+                        </span>
+                      </div>
+                      <h3>{t("saved_empty_title")}</h3>
+                      <p>{t("saved_empty_body")}</p>
+                    </div>
+                  )}
+                </div>
+              </section>
+            ) : homeTab === "community" && !readOnly ? (
+              <section className="library">
+                <CommunityFeed
+                  notify={setNotice}
+                  profile={profile}
+                  onOpenProfile={(author, e) => handleProfileNav(author.id, author, e)}
+                />
               </section>
             ) : homeTab === "discover" && !readOnly ? (
               <section className="library">
@@ -3578,6 +4724,11 @@ export default function App({
                       bookmarkedIds={bookmarkedIds}
                       edit={() => open("collection", c)}
                       remove={() => setPendingDeleteCollection(c)}
+                      refreshIcons={
+                        c.id === "temporary-filter"
+                          ? undefined
+                          : () => refreshCollectionIcons(c.id)
+                      }
                       add={(groupId) =>
                         open(
                           "bookmark",
@@ -3737,17 +4888,14 @@ export default function App({
                     className={isLiked ? "active" : ""}
                     onClick={() => {
                       if (!draft.id) return;
-                      setIsLiked(
-                        toggleStoredId(
-                          draft.id,
-                          likedIds,
-                          setLikedIds,
-                          "linkable-liked",
-                        ),
-                      );
+                      if (kind === "collection") void toggleCollectionLiked(draft.id);
+                      else
+                        void toggleBookmarkLiked(draft as Bookmark).then((active) => {
+                          if (active !== undefined) setIsLiked(active);
+                        });
                     }}
                   >
-                    <Heart size={16} />
+                    <Heart size={16} fill={isLiked ? "currentColor" : "none"} />
                   </button>
                   <button
                     type="button"
@@ -3757,10 +4905,6 @@ export default function App({
                     className={isBookmarked ? "active" : ""}
                     onClick={() => {
                       if (!draft.id) return;
-                      // "Favoritar" uma coleção continua só local (não existe
-                      // "Itens Salvos" de coleção, só de favorito individual —
-                      // ver toggleBookmarkBookmarked); só o caso de favorito
-                      // de verdade passa a persistir no servidor.
                       if (kind === "bookmark") {
                         void toggleBookmarkBookmarked(draft as Bookmark).then(
                           (active) => {
@@ -3768,32 +4912,30 @@ export default function App({
                           },
                         );
                       } else {
-                        setIsBookmarked(
-                          toggleStoredId(
-                            draft.id,
-                            bookmarkedIds,
-                            setBookmarkedIds,
-                            "linkable-bookmarked",
-                          ),
-                        );
+                        void toggleCollectionSaved(draft.id);
                       }
                     }}
                   >
-                    <BookmarkIcon size={16} />
+                    <BookmarkIcon size={16} fill={isBookmarked ? "currentColor" : "none"} />
                   </button>
-                  <button
-                    type="button"
-                    aria-label={`Compartilhar ${kind === "collection" ? "coleção" : "favorito"}`}
-                    title="Compartilhar"
-                    onClick={() => {
+                  <ShareButton
+                    url={draft.url || location.href}
+                    title={draft.name}
+                    label={`Compartilhar ${kind === "collection" ? "coleção" : "favorito"}`}
+                    size={16}
+                    onCopyLink={() => {
                       void navigator.clipboard?.writeText(
                         draft.url || location.href,
                       );
                       setNotice("Link copiado.");
+                      if (!draft.id) return;
+                      const path =
+                        kind === "collection"
+                          ? `/community/posts/${encodeURIComponent(draft.id)}/share`
+                          : `/community/items/${encodeURIComponent(draft.id)}/share`;
+                      void api(path, "POST").catch(() => {});
                     }}
-                  >
-                    <Share2 size={16} />
-                  </button>
+                  />
                   {kind === "collection" && (
                     <button
                       type="button"
@@ -4671,9 +5813,11 @@ export default function App({
           </div>
           <div className="delete-confirm">
             <p>
-              Excluir "{pendingDeleteSection?.name}"? Os favoritos que estão
-              nela não são apagados — só voltam a ficar fora de qualquer{" "}
-              {pendingDeleteSection?.display === "section" ? "seção" : "grupo"}.
+              {pendingDeleteSection?.display === "section"
+                ? t("section_delete_confirm", { name: pendingDeleteSection.name })
+                : t("group_delete_confirm_collection", {
+                    name: pendingDeleteSection?.name || "",
+                  })}
             </p>
             <button
               type="button"
@@ -4691,6 +5835,69 @@ export default function App({
             </button>
           </div>
         </div>
+      </dialog>
+      <dialog
+        ref={aboutDialog}
+        aria-labelledby="about-account-title"
+        onClose={() => setIsAboutOpen(false)}
+        onClick={(e) => {
+          if (e.target === aboutDialog.current) setIsAboutOpen(false);
+        }}
+      >
+        {readOnly && (
+          <div className="modal-content">
+            <div className="modal-heading">
+              <h2 id="about-account-title">Sobre esta conta</h2>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="Fechar"
+                onClick={() => setIsAboutOpen(false)}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="about-account">
+              <span
+                className="feed-avatar"
+                style={{ "--orb": sharedFallback.color || "#9aa0a6" } as React.CSSProperties}
+              >
+                {publicProfileAvatar ? (
+                  <img src={publicProfileAvatar} alt="" />
+                ) : (
+                  publicProfileName.slice(0, 1).toUpperCase()
+                )}
+              </span>
+              <div className="feed-post-meta">
+                <strong>{publicProfileName}</strong>
+                {publicProfileUsername && (
+                  <span className="feed-post-sub">@{publicProfileUsername}</span>
+                )}
+              </div>
+            </div>
+            <ul className="about-account-facts">
+              <li>
+                <span>Publicações no Linkable</span>
+                <strong>{collections.length}</strong>
+              </li>
+              <li>
+                <span>Seguidores</span>
+                <strong>{viewedProfile?.followerCount ?? 0}</strong>
+              </li>
+              <li>
+                <span>Conta desde</span>
+                <strong>
+                  {viewedProfile?.memberSince
+                    ? new Date(viewedProfile.memberSince).toLocaleDateString("pt-BR", {
+                        month: "long",
+                        year: "numeric",
+                      })
+                    : "Conta de demonstração"}
+                </strong>
+              </li>
+            </ul>
+          </div>
+        )}
       </dialog>
     </div>
   );

@@ -1,16 +1,59 @@
+/* Mesmos tokens do site (ver :root em styles.css) — preto no tema escuro,
+   claro no tema claro. A extensão não tem acesso à escolha de tema salva no
+   site (localStorage de outra origem), então segue o tema do sistema. */
 :root {
   color-scheme: dark;
-  --bg: #0f172a;
-  --surface: #161f38;
-  --raised: #202a4a;
-  --text: #f3f4ff;
-  --muted: #8b93b5;
-  --border: #263256;
+  --bg: #0a0a0a;
+  --surface: #161616;
+  --raised: #212121;
+  --text: #f5f5f5;
+  --muted: #9a9a9a;
+  --border: #2a2a2a;
   --accent: #8b5cf6;
   --accent-ink: #ffffff;
+  --danger: #ef4444;
+  --success: #10b981;
+  --scroll-thumb: color-mix(in srgb, var(--muted) 35%, transparent);
+  --scroll-thumb-hover: color-mix(in srgb, var(--muted) 65%, transparent);
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f8fafc;
+    --surface: #ffffff;
+    --raised: #ecedfb;
+    --text: #0f172a;
+    --muted: #6b7292;
+    --border: #e1e3f5;
+  }
 }
 * {
   box-sizing: border-box;
+}
+html {
+  background: var(--bg);
+  /* Barra de rolagem fina, sem trilho — mesma do site (ver ".app-shell >
+     main" em styles.css). */
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+html:hover {
+  scrollbar-color: var(--scroll-thumb-hover) transparent;
+}
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scroll-thumb-hover);
 }
 body {
   margin: 0;
@@ -38,6 +81,11 @@ header strong {
 .state {
   padding: 16px;
 }
+.state > p {
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0 0 12px;
+}
 .hidden {
   display: none;
 }
@@ -51,21 +99,41 @@ header strong {
 .optional {
   font-weight: 400;
   text-transform: none;
+  opacity: 0.8;
 }
 select,
 input[type="text"],
 textarea {
   display: block;
   width: 100%;
-  margin-top: 6px;
-  padding: 8px 10px;
-  border-radius: 8px;
+  margin-top: 7px;
+  padding: 10px 12px;
+  border-radius: 9px;
   border: 1px solid var(--border);
-  background: var(--raised);
+  background: var(--surface);
   color: var(--text);
   font-size: 13px;
   font-family: inherit;
   resize: vertical;
+  transition: border-color 0.18s;
+}
+select:hover,
+input[type="text"]:hover,
+textarea:hover {
+  border-color: color-mix(in srgb, var(--muted) 45%, var(--border));
+}
+select:focus,
+input[type="text"]:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+input::placeholder,
+textarea::placeholder {
+  color: color-mix(in srgb, var(--muted) 70%, transparent);
+}
+select {
+  cursor: pointer;
 }
 .preview-head {
   display: flex;
@@ -74,38 +142,64 @@ textarea {
   gap: 10px;
   margin-bottom: 12px;
 }
+/* Moldura arredondada (mesmo canto do formato "rounded" do site), com o
+   favicon inteiro e respiro em volta — não recortado num círculo. */
 .preview-icon {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
+  width: 64px;
+  height: 64px;
+  padding: 12px;
+  border-radius: 28%;
   border: 1px solid var(--border);
-  background: var(--raised);
-  object-fit: cover;
+  background: var(--surface);
+  object-fit: contain;
   flex-shrink: 0;
+  box-shadow: 0 6px 18px #0000001f;
 }
 .preview-head .field {
   width: 100%;
   margin-bottom: 0;
   text-align: center;
 }
+/* Botões em pílula, como no restante do site. */
 button {
   cursor: pointer;
   border: 0;
-  border-radius: 8px;
-  padding: 10px 14px;
+  border-radius: 999px;
+  padding: 11px 18px;
+  font-family: inherit;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 650;
   width: 100%;
+  transition:
+    filter 0.18s,
+    background 0.18s,
+    color 0.18s,
+    border-color 0.18s;
+}
+button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 button.primary {
   background: var(--accent);
   color: var(--accent-ink);
+}
+button.primary:not(:disabled):hover {
+  filter: brightness(1.1);
 }
 button.secondary {
   background: var(--raised);
   color: var(--text);
   border: 1px solid var(--border);
   margin-top: 8px;
+}
+button.secondary:not(:disabled):hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .inline-creator {
   display: flex;
@@ -121,16 +215,21 @@ button.secondary {
   flex-shrink: 0;
   width: auto;
   margin-top: 0;
+  padding: 9px 16px;
+}
+#save-now {
+  margin-top: 4px;
 }
 .feedback {
   min-height: 16px;
   font-size: 12px;
   margin: 10px 0 0;
   color: var(--muted);
+  text-align: center;
 }
 .feedback.error {
-  color: #ec9999;
+  color: var(--danger);
 }
 .feedback.success {
-  color: var(--accent);
+  color: var(--success);
 }

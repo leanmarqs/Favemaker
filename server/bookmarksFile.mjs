@@ -59,14 +59,21 @@ function renderBookmark(bookmark) {
   return `<DT><A HREF="${escapeHtml(bookmark.url)}"${icon}>${escapeHtml(bookmark.name)}</A>`;
 }
 
-// Grupos viram uma subpasta dentro da pasta da coleção — só um nível, já que
-// o Linkable também só suporta um nível de agrupamento — o que faz o roundtrip
-// (exportar e reimportar, no Linkable ou em qualquer navegador) preservar a
-// estrutura sem perdas.
-function renderFolder(name, bookmarks, groups) {
+// Grupos viram uma subpasta dentro da pasta da coleção; um agrupamento que
+// vive dentro de uma seção (parentId) vira subpasta da pasta dessa seção. Na
+// reimportação, pasta aninhada além de um nível é achatada (ver
+// flattenBookmarks em server/index.mjs) — os favoritos nunca se perdem.
+function renderFolder(name, bookmarks, groups, allGroups = groups) {
   const items = [
     ...bookmarks.map(renderBookmark),
-    ...groups.map((group) => renderFolder(group.name, group.bookmarks, [])),
+    ...groups.map((group) =>
+      renderFolder(
+        group.name,
+        group.bookmarks,
+        allGroups.filter((child) => child.parentId === group.id),
+        allGroups,
+      ),
+    ),
   ].join("\n");
   return `<DT><H3>${escapeHtml(name)}</H3>\n<DL><p>\n${items}\n</DL><p>`;
 }
@@ -74,7 +81,14 @@ function renderFolder(name, bookmarks, groups) {
 // collections: [{ name, bookmarks: [{name,url,favicon}], groups: [{name, bookmarks}] }]
 export function buildBookmarksHtml(collections) {
   const body = collections
-    .map((c) => renderFolder(c.name, c.bookmarks, c.groups))
+    .map((c) =>
+      renderFolder(
+        c.name,
+        c.bookmarks,
+        c.groups.filter((group) => !group.parentId),
+        c.groups,
+      ),
+    )
     .join("\n");
   return `<!DOCTYPE NETSCAPE-Bookmark-file-1>
 <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">

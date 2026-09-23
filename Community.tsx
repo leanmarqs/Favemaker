@@ -3,7 +3,6 @@ import {
   Heart,
   MessageCircle,
   Bookmark as BookmarkIcon,
-  Share2,
   Reply,
   Flag,
   MoreVertical,
@@ -16,7 +15,17 @@ import {
   X,
 } from "lucide-react";
 import { api, CollectionRow } from "./App";
+import ShareButton from "./ShareButton";
+import PosterRow from "./PosterRow";
 import type { Account, Bookmark, Collection } from "./types";
+
+// Liga/desliga o layout experimental de cards grandes tipo pôster (ver
+// PosterRow.tsx) no lugar do pill de sempre (CollectionRow, o mesmo usado em
+// "Suas coleções") — só aqui no feed da Comunidade, só pra comparação lado a
+// lado. O <CollectionRow> original continua logo abaixo, intocado: virar
+// "false" (ou apagar este flag e a ramificação que o usa) volta exatamente
+// ao layout de sempre.
+const POSTER_LAYOUT_PREVIEW = true;
 
 // Autor de um comentário/publicação no feed: os usuários fictícios (ver
 // communityMock.ts) só têm cor + inicial; um autor real (o próprio visitante,
@@ -47,6 +56,8 @@ interface FeedPost {
   postedAt: string;
   collection: Collection;
   likes: number;
+  saves: number;
+  shares: number;
 }
 interface CommunityState {
   likedPostIds: string[];
@@ -90,6 +101,7 @@ const emptyState: CommunityState = {
 // "Sobre esta conta", não numa lista antecipada pra cada publicação do feed.
 interface AccountInfo {
   followerCount: number;
+  followingCount: number;
   postCount: number;
   memberSince: string | null;
 }
@@ -174,6 +186,7 @@ function HoverCard({
   onToggleFollow,
   onMouseEnter,
   onMouseLeave,
+  onOpenProfile,
 }: {
   author: FeedAuthor;
   info?: AccountInfo;
@@ -182,13 +195,20 @@ function HoverCard({
   onToggleFollow: () => void;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
+  onOpenProfile: (author: FeedAuthor, e: React.MouseEvent) => void;
 }) {
   return (
     <div className="hover-card" onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
       <div className="hover-card-head">
         <Avatar author={author} />
         <div className="feed-post-meta">
-          <strong>{author.name}</strong>
+          <a
+            className="hover-card-name-link"
+            href={publicProfileHref(author)}
+            onClick={(e) => onOpenProfile(author, e)}
+          >
+            <strong>{author.name}</strong>
+          </a>
           <span className="feed-post-sub">@{author.username}</span>
         </div>
       </div>
@@ -202,7 +222,7 @@ function HoverCard({
           <span>seguidores</span>
         </div>
         <div>
-          <strong>0</strong>
+          <strong>{loading ? "…" : (info?.followingCount ?? 0)}</strong>
           <span>seguindo</span>
         </div>
       </div>
@@ -236,21 +256,27 @@ const dragHandleStub = {
 export default function CommunityFeed({
   notify,
   profile,
+  onOpenProfile,
 }: {
   notify: (message: string) => void;
   profile: Account | undefined;
+  onOpenProfile: (author: FeedAuthor, e: React.MouseEvent) => void;
 }) {
   const me = profileAuthor(profile);
   const [state, setState] = useState<CommunityState>(emptyState);
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [postsLoading, setPostsLoading] = useState(true);
-  // Sub-abas da Comunidade: "feed" é o mural de todo mundo (inalterado);
-  // "saved" mostra só as publicações em que o visitante clicou "Salvar" (ver
-  // toggleSavePost e savedPostIds) — o "Salvar" do post inteiro nunca copiou
-  // nada pra "Suas coleções" (isso é só o coração de cada favorito
-  // individual, ver toggleBookmarked mais abaixo), então esta aba é onde essa
-  // lista de publicações salvas passa a ter um lugar pra ser revisitada.
-  const [feedTab, setFeedTab] = useState<"feed" | "saved">("feed");
+  // Expandir/recolher uma coleção alheia no feed é só uma preferência de
+  // exibição do visitante — diferente de "Suas coleções", não existe PATCH
+  // /api/collections/:id pra persistir isso (o post nem pertence a ele), e
+  // não faria sentido persistir mesmo se desse: é só "quero ver tudo agora",
+  // esquece ao trocar de aba/recarregar, por post. Todo post começa
+  // recolhido no feed (ver "behavior" abaixo), mesmo que o dono tenha
+  // marcado a própria coleção como expansiva em "Suas coleções" dele — só
+  // expande aqui se o visitante clicar no botão.
+  const [expandedPostIds, setExpandedPostIds] = useState<
+    Record<string, boolean>
+  >({});
   const commentInputs = useRef<Record<string, HTMLInputElement | null>>({});
   const [openComments, setOpenComments] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -267,6 +293,13 @@ export default function CommunityFeed({
   const [accountInfoLoading, setAccountInfoLoading] = useState<Record<string, boolean>>({});
   const [aboutAccountId, setAboutAccountId] = useState<string | null>(null);
   const aboutDialog = useRef<HTMLDialogElement>(null);
+  // Diferente de savedItemIds (CommunityItemSave, só um "curti isso" leve):
+  // o coração de bookmark de cada link do feed usa o MESMO mecanismo de
+  // "favoritar" de App.tsx (POST /api/saved-items/:sourceId) — cria uma
+  // cópia de verdade na coleção reservada "Itens Salvos" do visitante, que
+  // passa a poder editá-la. savedFromIds guarda os ids ORIGINAIS já
+  // copiados, pra saber qual coração já deve acender.
+  const [savedFromIds, setSavedFromIds] = useState<string[]>([]);
 
   // Fecha o menu "⋮" (do comentário ou da publicação — mesma classe
   // ".comment-menu" pros dois) ao clicar fora ou apertar Esc — mesmo padrão
@@ -369,6 +402,49 @@ export default function CommunityFeed({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const loaded = await api("/saved-items");
+        if (!cancelled) setSavedFromIds(loaded.savedFromIds || []);
+      } catch {
+        // Silencioso, igual ao resto do estado da Comunidade: sem essa lista
+        // o coração de favoritar só começa apagado, nada trava.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Favoritar um link do feed liga (ou desliga) uma referência a ele na aba
+  // "Itens Salvos", exatamente como o mesmo botão faz num perfil público (ver
+  // toggleBookmarkBookmarked em App.tsx) — nunca uma cópia, sem isso
+  // "favoritar" no feed só acendia um coração sem guardar o link em lugar
+  // nenhum pro visitante.
+  async function toggleSavedCopy(bookmark: Bookmark) {
+    const wasSaved = savedFromIds.includes(bookmark.id);
+    setSavedFromIds((current) =>
+      wasSaved ? current.filter((id) => id !== bookmark.id) : [...current, bookmark.id],
+    );
+    try {
+      const result = await api(`/saved-items/${encodeURIComponent(bookmark.id)}`, "POST");
+      setSavedFromIds((current) =>
+        result.active
+          ? current.includes(bookmark.id)
+            ? current
+            : [...current, bookmark.id]
+          : current.filter((id) => id !== bookmark.id),
+      );
+    } catch (e) {
+      setSavedFromIds((current) =>
+        wasSaved ? [...current, bookmark.id] : current.filter((id) => id !== bookmark.id),
+      );
+      notify((e as Error).message);
+    }
+  }
+
   // Comentário oculto por denúncia (ver hiddenCommentIds) ou de alguém
   // bloqueado (ver blockedAuthorIds) simplesmente não entra na lista — some
   // do feed de quem bloqueou/da ocultação automática sem precisar de nenhum
@@ -411,12 +487,19 @@ export default function CommunityFeed({
     void toggleRemote(`/community/posts/${encodeURIComponent(postId)}/like`, postId, "likedPostIds");
   }
 
-  function toggleSavePost(postId: string, collectionName: string) {
+  // isOwn: dono vendo a própria publicação no feed — salvar não cria
+  // referência nenhuma (ver POST /api/community/posts/:postId/save em
+  // server/community.mjs), só marca os itens dela como salvos. Alheia: vira
+  // uma referência "cheia" na aba "Itens Salvos", nunca uma cópia editável em
+  // "Suas coleções".
+  function toggleSavePost(postId: string, collectionName: string, isOwn: boolean) {
     const wasSaved = state.savedPostIds.includes(postId);
     notify(
       wasSaved
-        ? "Removido das suas coleções."
-        : `"${collectionName}" adicionada às suas coleções.`,
+        ? "Removido dos salvos."
+        : isOwn
+          ? "Itens desta coleção marcados como salvos."
+          : `"${collectionName}" salva em Itens Salvos.`,
     );
     void toggleRemote(`/community/posts/${encodeURIComponent(postId)}/save`, postId, "savedPostIds");
   }
@@ -424,6 +507,13 @@ export default function CommunityFeed({
   function sharePost(postId: string) {
     void navigator.clipboard?.writeText(`https://linkable.app/c/${postId}`);
     notify("Link copiado.");
+    void api(`/community/posts/${encodeURIComponent(postId)}/share`, "POST")
+      .then((result) =>
+        setPosts((current) =>
+          current.map((post) => (post.id === postId ? { ...post, shares: result.shareCount } : post)),
+        ),
+      )
+      .catch(() => {});
   }
 
   async function addComment(postId: string) {
@@ -590,8 +680,7 @@ export default function CommunityFeed({
   const visiblePosts = posts.filter(
     (post) => !state.blockedAuthorIds.includes(post.user.id) && !state.hiddenPostIds.includes(post.id),
   );
-  const savedPosts = visiblePosts.filter((post) => state.savedPostIds.includes(post.id));
-  const postsToShow = feedTab === "saved" ? savedPosts : visiblePosts;
+  const postsToShow = visiblePosts;
   const aboutAuthor = aboutAccountId
     ? (posts.find((post) => post.user.id === aboutAccountId)?.user ?? null)
     : null;
@@ -599,35 +688,13 @@ export default function CommunityFeed({
 
   return (
     <div className="community-feed">
-      <div className="feed-subtabs" role="tablist" aria-label="Comunidade">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={feedTab === "feed"}
-          className={feedTab === "feed" ? "active" : undefined}
-          onClick={() => setFeedTab("feed")}
-        >
-          Feed
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={feedTab === "saved"}
-          className={feedTab === "saved" ? "active" : undefined}
-          onClick={() => setFeedTab("saved")}
-        >
-          Coleções salvas
-        </button>
-      </div>
       {postsLoading ? (
         <p className="community-empty" aria-busy="true">
           Carregando…
         </p>
       ) : !postsToShow.length ? (
         <p className="community-empty">
-          {feedTab === "saved"
-            ? 'Você ainda não salvou nenhuma coleção. Toque em "Salvar" numa publicação do feed pra guardá-la aqui.'
-            : "Ninguém publicou uma coleção pública ainda. Marque uma das suas como pública para ser a primeira a aparecer aqui."}
+          Ninguém publicou uma coleção pública ainda. Marque uma das suas como pública para ser a primeira a aparecer aqui.
         </p>
       ) : (
         postsToShow.map((post) => {
@@ -636,6 +703,18 @@ export default function CommunityFeed({
         const following = state.followedAuthorIds.includes(post.user.id);
         const postReported = state.reportedPostIds.includes(post.id);
         const postComments = mergedComments(post.id);
+        // Compartilhados entre CollectionRow e PosterRow (ver
+        // POSTER_LAYOUT_PREVIEW) — mesmo comportamento de curtir/favoritar/
+        // compartilhar um favorito específico do post, não importa qual dos
+        // dois layouts está desenhando o card dele agora.
+        const toggleItemLiked = (bookmark: Bookmark) =>
+          toggleRemote(`/community/items/${encodeURIComponent(bookmark.id)}/like`, bookmark.id, "likedItemIds");
+        const toggleItemBookmarked = (bookmark: Bookmark) => toggleSavedCopy(bookmark);
+        const shareItem = (bookmark: Bookmark) => {
+          void navigator.clipboard?.writeText(bookmark.url);
+          notify("Link copiado.");
+          void api(`/community/items/${encodeURIComponent(bookmark.id)}/share`, "POST").catch(() => {});
+        };
         return (
           <article className="feed-post" key={post.id}>
             <header className="feed-post-header">
@@ -644,7 +723,11 @@ export default function CommunityFeed({
                 onMouseEnter={() => openHoverCard(post.id, post.user.id)}
                 onMouseLeave={scheduleHoverClose}
               >
-                <a className="feed-author-link" href={publicProfileHref(post.user)}>
+                <a
+                  className="feed-author-link"
+                  href={publicProfileHref(post.user)}
+                  onClick={(e) => onOpenProfile(post.user, e)}
+                >
                   <Avatar author={post.user} />
                   <div className="feed-post-meta">
                     <strong>{post.user.name}</strong>
@@ -664,6 +747,7 @@ export default function CommunityFeed({
                     }
                     onMouseEnter={() => openHoverCard(post.id, post.user.id)}
                     onMouseLeave={scheduleHoverClose}
+                    onOpenProfile={onOpenProfile}
                   />
                 )}
               </div>
@@ -745,30 +829,46 @@ export default function CommunityFeed({
               </div>
             </header>
             <div className="feed-post-body">
+              {POSTER_LAYOUT_PREVIEW ? (
+                <PosterRow
+                  collection={post.collection}
+                  pageSize={4}
+                  likedIds={state.likedItemIds}
+                  bookmarkedIds={savedFromIds}
+                  toggleLiked={toggleItemLiked}
+                  toggleBookmarked={toggleItemBookmarked}
+                  shareBookmark={shareItem}
+                />
+              ) : (
               <CollectionRow
-                collection={post.collection}
+                collection={{
+                  ...post.collection,
+                  // Sempre recolhido por padrão no feed, mesmo que o dono
+                  // tenha marcado a coleção como "expansive" na conta dele
+                  // — só expande se o próprio visitante clicar no botão
+                  // (ver expandedPostIds acima).
+                  behavior: expandedPostIds[post.id] ? "expansive" : "fixed",
+                }}
                 readOnly
                 toolbarsEnabled={false}
                 pageSize={5}
                 likedIds={state.likedItemIds}
-                bookmarkedIds={state.savedItemIds}
+                bookmarkedIds={savedFromIds}
                 edit={noop}
                 remove={noop}
                 add={noop}
                 editBookmark={noop}
                 removeBookmark={noop}
                 openBookmark={noop}
-                toggleLiked={(bookmark: Bookmark) =>
-                  toggleRemote(`/community/items/${encodeURIComponent(bookmark.id)}/like`, bookmark.id, "likedItemIds")
+                toggleLiked={toggleItemLiked}
+                toggleBookmarked={toggleItemBookmarked}
+                shareBookmark={shareItem}
+                toggleBehavior={() =>
+                  setExpandedPostIds((current) => ({
+                    ...current,
+                    [post.id]: !current[post.id],
+                  }))
                 }
-                toggleBookmarked={(bookmark: Bookmark) =>
-                  toggleRemote(`/community/items/${encodeURIComponent(bookmark.id)}/save`, bookmark.id, "savedItemIds")
-                }
-                shareBookmark={(bookmark: Bookmark) => {
-                  void navigator.clipboard?.writeText(bookmark.url);
-                  notify("Link copiado.");
-                }}
-                toggleBehavior={noop}
                 createGroup={async () => null}
                 moveToGroup={noopAsync}
                 reorderBookmarks={noopAsync}
@@ -777,6 +877,7 @@ export default function CommunityFeed({
                 sectionsBulkAction={null}
                 dragHandle={dragHandleStub}
               />
+              )}
             </div>
             <div className="feed-post-actions">
               <button
@@ -785,7 +886,7 @@ export default function CommunityFeed({
                 aria-pressed={liked}
                 onClick={() => toggleLikePost(post.id)}
               >
-                <Heart size={16} />
+                <Heart size={16} fill={liked ? "currentColor" : "none"} />
                 {post.likes + (liked ? 1 : 0)}
               </button>
               <button
@@ -802,15 +903,20 @@ export default function CommunityFeed({
                 type="button"
                 className={saved ? "active" : ""}
                 aria-pressed={saved}
-                onClick={() => toggleSavePost(post.id, post.collection.name)}
+                onClick={() => toggleSavePost(post.id, post.collection.name, post.user.id === me.id)}
               >
-                <BookmarkIcon size={16} />
-                {saved ? "Salvo" : "Salvar"}
+                <BookmarkIcon size={16} fill={saved ? "currentColor" : "none"} />
+                {post.saves + (saved ? 1 : 0)}
               </button>
-              <button type="button" onClick={() => sharePost(post.id)}>
-                <Share2 size={16} />
-                Compartilhar
-              </button>
+              <ShareButton
+                url={`https://linkable.app/c/${post.id}`}
+                title={post.collection.name}
+                label={`Compartilhar publicação de ${post.collection.name}`}
+                size={16}
+                onCopyLink={() => sharePost(post.id)}
+              >
+                {post.shares}
+              </ShareButton>
             </div>
             {openComments === post.id && (
               <div className="feed-comments">
@@ -824,7 +930,11 @@ export default function CommunityFeed({
                       <Avatar author={comment.author} small />
                       <div className="feed-comment-body">
                         <div className="feed-comment-head">
-                          <a className="feed-comment-author-link" href={publicProfileHref(comment.author)}>
+                          <a
+                            className="feed-comment-author-link"
+                            href={publicProfileHref(comment.author)}
+                            onClick={(e) => onOpenProfile(comment.author, e)}
+                          >
                             <strong>{comment.author.name}</strong>
                             <span className="feed-post-sub">@{comment.author.username}</span>
                           </a>
@@ -906,7 +1016,7 @@ export default function CommunityFeed({
                             aria-pressed={commentLiked}
                             onClick={() => toggleLikeComment(comment.id)}
                           >
-                            <Heart size={14} />
+                            <Heart size={14} fill={commentLiked ? "currentColor" : "none"} />
                             {comment.likes + (commentLiked ? 1 : 0)}
                           </button>
                           <button
@@ -915,11 +1025,14 @@ export default function CommunityFeed({
                             aria-pressed={commentSaved}
                             onClick={() => toggleSaveComment(comment.id)}
                           >
-                            <BookmarkIcon size={14} />
+                            <BookmarkIcon size={14} fill={commentSaved ? "currentColor" : "none"} />
                           </button>
-                          <button type="button" onClick={() => shareComment(post.id, comment.id)}>
-                            <Share2 size={14} />
-                          </button>
+                          <ShareButton
+                            url={`https://linkable.app/c/${post.id}#${comment.id}`}
+                            label={`Compartilhar comentário de ${comment.author.name}`}
+                            size={14}
+                            onCopyLink={() => shareComment(post.id, comment.id)}
+                          />
                         </div>
                       </div>
                     </div>

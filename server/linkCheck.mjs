@@ -13,27 +13,36 @@ export const LINK_RECHECK_AFTER_MS = 24 * 60 * 60 * 1000;
 // si pareça uma rajada de requisições saindo do mesmo servidor.
 const DELAY_BETWEEN_CHECKS_MS = 400;
 
-// Um link "quebrado" aqui é só "não respondeu 200 nas tentativas do
-// safeFetch" — isso inclui de propósito casos que não significam
-// necessariamente uma página morta (bloqueio por User-Agent, exigência de
-// login, um 403 de anti-bot). Por isso o resultado só decolore o ícone (ver
-// Sphere no App.tsx), nunca esconde ou apaga o favorito — é um sinal pro
-// dono investigar, não uma verdade absoluta.
-// Status que significam "o servidor está de pé e respondeu", só que negou
-// essa requisição sem cookie/sessão de navegador de verdade — ex.: uma loja
-// que sempre manda um visitante anônimo pra um fluxo de login antes de
-// mostrar a página (foi exatamente isso que fez o link da Battle.net ser
-// marcado como quebrado por engano). Diferente de um site fora do ar, isso
-// não indica um link morto, então não deve decolorir o ícone.
-const REACHABLE_BUT_GATED_STATUSES = new Set([401, 403, 429]);
+// Em vez de tentar listar toda proteção anti-bot que pode negar a
+// requisição (lista sem fim: 401/403/429 de login ou rate limit, 202 do WAF
+// do Dribbble, timeout porque o WAF simplesmente trava a conexão em vez de
+// responder — foi isso, não um status, que fez o Stack Overflow parecer
+// quebrado numa rodada e não na outra), o link só é marcado como "quebrado"
+// quando o sinal é forte o bastante pra não ter outra explicação plausível:
+// um status HTTP que sempre significa página/servidor com erro de verdade
+// (nunca usado por bloqueio anti-bot de propósito), ou uma falha de rede que
+// só acontece quando literalmente não há ninguém do outro lado. 503 é o mais
+// arriscado da lista — Cloudflare já usou esse status pra própria página de
+// desafio no passado — mas hoje isso é feito quase sempre com 403 (ver
+// checkLink de dribbble.net/stackoverflow.com), então o risco de falso
+// positivo é pequeno comparado ao valor de detectar uma manutenção real.
+// Qualquer outro erro (timeout, TLS, redirecionamento demais, IP privado)
+// vira "ok": o custo de assustar o dono de um link que está no ar é bem
+// maior que o de deixar passar, por uma rodada, um link de fato morto — ele
+// continua sendo checado de novo a cada 24h (ver LINK_RECHECK_AFTER_MS).
+const BROKEN_STATUSES = new Set([404, 410, 500, 502, 503, 504]);
+// ENOTFOUND: o domínio não resolve mais (site realmente não existe).
+// ECONNREFUSED: a porta nem aceita conexão (não há servidor nenhum ali) —
+// diferente de um timeout, que também acontece quando um WAF só demora ou
+// trava de propósito pra devolver o desafio (ver comentário acima).
+const BROKEN_NETWORK_CODES = new Set(["ENOTFOUND", "ECONNREFUSED"]);
 export async function checkLink(url) {
   try {
     await safeFetch(url, 0, "Linkable-LinkChecker/1.0", true);
     return "ok";
   } catch (error) {
-    if (REACHABLE_BUT_GATED_STATUSES.has(error.status) || error.tooManyRedirects)
-      return "ok";
-    return "broken";
+    if (error.status) return BROKEN_STATUSES.has(error.status) ? "broken" : "ok";
+    return BROKEN_NETWORK_CODES.has(error.code) ? "broken" : "ok";
   }
 }
 
