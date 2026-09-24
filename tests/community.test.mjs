@@ -36,12 +36,12 @@ test(
       const usernameA = `test_${Date.now()}_a`;
       const usernameB = `test_${Date.now()}_b`;
       const password = "test-password-12345";
-      await a("/auth/register", "POST", {
+      await a("/auth/register", "POST", { acceptTerms: true,
         username: usernameA,
         password,
         email: `${usernameA}@example.com`,
       });
-      await b("/auth/register", "POST", {
+      await b("/auth/register", "POST", { acceptTerms: true,
         username: usernameB,
         password,
         email: `${usernameB}@example.com`,
@@ -138,7 +138,7 @@ test(
     async function registerAndLogin(tag) {
       const c = client();
       const username = `test_${Date.now()}_${tag}_${Math.random().toString(36).slice(2, 7)}`;
-      await c("/auth/register", "POST", {
+      await c("/auth/register", "POST", { acceptTerms: true,
         username,
         password: "test-password-12345",
         email: `${username}@example.com`,
@@ -285,7 +285,7 @@ test(
     async function registerAndLogin(tag) {
       const c = client();
       const username = `test_${Date.now()}_${tag}_${Math.random().toString(36).slice(2, 7)}`;
-      await c("/auth/register", "POST", {
+      await c("/auth/register", "POST", { acceptTerms: true,
         username,
         password: "test-password-12345",
         email: `${username}@example.com`,

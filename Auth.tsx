@@ -3,6 +3,8 @@ import { ArrowRight, Lock, Mail, User } from "lucide-react";
 import App from "./App";
 import PasswordField from "./PasswordField";
 import type { Account } from "./types";
+import { LegalDialog, type LegalDocKind } from "./LegalDocs";
+import { useLanguage } from "./i18n";
 import "./styles.css";
 
 type View = "login" | "register" | "forgot" | "reset" | "verify";
@@ -125,6 +127,11 @@ export default function Auth() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  // Aceite dos Termos/Política no cadastro (LGPD) — o servidor recusa o
+  // cadastro sem ele, e grava a versão e a data do aceite na conta.
+  const [acceptTerms, setAcceptTerms] = useState(false);
+  const [legalDoc, setLegalDoc] = useState<LegalDocKind | null>(null);
+  const { t } = useLanguage();
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [resendCooldown, setResendCooldown] = useState(readResendCooldown);
@@ -261,7 +268,7 @@ export default function Auth() {
         setPassword("");
         setUser(data.user);
       } else if (view === "register") {
-        const data = await authRequest("register", { username, email, password });
+        const data = await authRequest("register", { username, email, password, acceptTerms });
         setPassword("");
         if (data.user) {
           setUser(data.user);
@@ -418,6 +425,26 @@ export default function Auth() {
                 minLength={8}
               />
             )}
+            {view === "register" && (
+              <label className="auth-terms">
+                <input
+                  type="checkbox"
+                  checked={acceptTerms}
+                  onChange={(e) => setAcceptTerms(e.target.checked)}
+                  required
+                />
+                <span>
+                  {t("legal_accept_prefix")}{" "}
+                  <button type="button" onClick={() => setLegalDoc("terms")}>
+                    {t("legal_terms")}
+                  </button>{" "}
+                  {t("legal_accept_and")}{" "}
+                  <button type="button" onClick={() => setLegalDoc("privacy")}>
+                    {t("legal_privacy")}
+                  </button>
+                </span>
+              </label>
+            )}
             {notice && <p className="auth-notice">{notice}</p>}
             {error && (
               <p className="auth-error" role="alert">
@@ -532,6 +559,7 @@ export default function Auth() {
         <img src="/background-3.png" alt="" />
       </aside>
     </main>
+    <LegalDialog doc={legalDoc} onClose={() => setLegalDoc(null)} />
     <dialog
       ref={googleNotFoundDialog}
       onClose={() => setGoogleNotFound(false)}

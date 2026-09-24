@@ -47,6 +47,7 @@ import ShareButton from "./ShareButton";
 import { useIsSmallSource } from "./PosterRow";
 import CommunityFeed from "./Community";
 import CollectionDots from "./CollectionDots";
+import { LegalDialog, type LegalDocKind } from "./LegalDocs";
 import { useLanguage } from "./i18n";
 import { mockCollectionsByAuthor } from "./communityMock";
 import "./styles.css";
@@ -2363,6 +2364,7 @@ export default function App({
   const [profileNotice, setProfileNotice] = useState("");
   const [nameDraft, setNameDraft] = useState("");
   const [usernameDraft, setUsernameDraft] = useState("");
+  const [legalDoc, setLegalDoc] = useState<LegalDocKind | null>(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
@@ -4177,6 +4179,43 @@ export default function App({
                   Sair de todos os outros dispositivos
                 </button>
               </div>
+              <div className="profile-section">
+                <h3>{t("legal_section")}</h3>
+                <p className="help">
+                  {profile?.termsAcceptedAt
+                    ? t("legal_accepted_on", {
+                        date: new Date(profile.termsAcceptedAt).toLocaleDateString(),
+                      })
+                    : t("legal_section_help")}
+                </p>
+                <div className="legal-actions">
+                  {/* Rota GET autenticada pelo cookie de sessão — o próprio
+                      navegador baixa o JSON (Content-Disposition). */}
+                  <a
+                    className="secondary legal-download"
+                    href="/api/auth/me/export"
+                    download
+                  >
+                    <Download size={15} />
+                    {t("legal_download_data")}
+                  </a>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => setLegalDoc("privacy")}
+                  >
+                    {t("legal_privacy")}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => setLegalDoc("terms")}
+                  >
+                    {t("legal_terms")}
+                  </button>
+                </div>
+                <p className="help">{t("legal_download_help")}</p>
+              </div>
               {(profileError || profileNotice) && (
                 <p
                   className={profileError ? "form-error" : "help"}
@@ -4827,6 +4866,7 @@ export default function App({
           alt="Linkable"
         />
       </footer>
+      <LegalDialog doc={legalDoc} onClose={() => setLegalDoc(null)} />
       {notice && !kind && (
         <div className="toast" role="status">
           <span>{notice}</span>

@@ -10,6 +10,7 @@ import { resolve } from "node:path";
 import { metadata, normalizeUrl, resolveImage } from "./metadata.mjs";
 import { parseBookmarksHtml, buildBookmarksHtml } from "./bookmarksFile.mjs";
 import { scheduleLinkChecks } from "./linkCheck.mjs";
+import { scheduleRetention } from "./retention.mjs";
 import { bumpRelevance, creditRelevance, RELEVANCE_WEIGHT } from "./relevance.mjs";
 
 const prisma = new PrismaClient();
@@ -60,6 +61,12 @@ if (process.env.NODE_ENV !== "production")
   );
 
 app.disable("x-powered-by");
+// Em produção (Render e afins) toda requisição chega por um proxy reverso —
+// sem isto, req.ip é o IP do proxy, igual pra todo mundo, e os limites por IP
+// (ver /api/auth em auth.mjs) viram um limite global compartilhado por todos
+// os usuários. "1" = confia só no proxy imediatamente à frente (o do host),
+// não em qualquer X-Forwarded-For que o próprio cliente mande.
+app.set("trust proxy", 1);
 // Cabeçalhos de segurança (CSP, no-sniff, no-framing, HSTS, etc.). CSP restrita
 // porque o build de produção é uma SPA de origem única sem scripts inline: só
 // os favicons/avatares (sempre convertidos em data URI por resolveImage, nunca
@@ -109,6 +116,17 @@ app.use("/api", (req, res, next) => {
   if (["POST", "PATCH", "DELETE"].includes(req.method) && !hasAllowedOrigin(req))
     return res.status(403).json({ error: "Origem não permitida." });
   next();
+});
+// Health check do host (ver render.yaml): responde 200 só se o banco também
+// responde — um processo de pé mas sem conexão com o Postgres não serve pra
+// nada. Público e sem dados, antes de installAuth.
+app.get("/api/health", async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ ok: true });
+  } catch {
+    res.status(503).json({ ok: false });
+  }
 });
 // Página de perfil público (App.tsx, ?perfil=<id>), inspirada no Twitter:
 // avatar/nome/usuário, "entrou em", seguidores e as coleções públicas do
@@ -1169,4 +1187,5 @@ if (
   // Só no servidor de verdade — importar este arquivo pra teste (ver
   // tests/api.test.mjs) não deve disparar checagens de link de fundo.
   scheduleLinkChecks(prisma);
+  scheduleRetention(prisma);
 }

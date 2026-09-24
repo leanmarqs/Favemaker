@@ -4,6 +4,7 @@ import argon2 from "argon2";
 import { OAuth2Client } from "google-auth-library";
 import { emailConfigured, sendPasswordResetEmail, sendVerificationEmail } from "./email.mjs";
 import { resolveImage } from "./metadata.mjs";
+import { LEGAL_VERSION } from "./legal.mjs";
 
 const scrypt = promisify(derive);
 const hash = (value) => createHash("sha256").update(value).digest("hex");
@@ -33,6 +34,8 @@ const publicUser = (owner) => ({
   banner: owner.banner || "",
   hasPassword: Boolean(owner.passwordHash),
   googleLinked: Boolean(owner.googleId),
+  termsVersion: owner.termsVersion || "",
+  termsAcceptedAt: owner.termsAcceptedAt || null,
 });
 export async function hashPassword(password) {
   return argon2.hash(password);
@@ -193,6 +196,10 @@ export function installAuth(app, prisma) {
       return res.status(400).json({ error: `A senha deve ter entre ${MIN_PASSWORD} e 128 caracteres.` });
     if (await isPasswordBreached(password))
       return res.status(400).json({ error: "Esta senha apareceu em vazamentos de dados conhecidos. Escolha outra senha." });
+    // Aceite explícito dos Termos de Uso e da Política de Privacidade (LGPD):
+    // a versão e o momento ficam gravados na conta como prova do aceite.
+    if (req.body.acceptTerms !== true)
+      return res.status(400).json({ error: "Aceite os Termos de Uso e a Política de Privacidade para criar a conta." });
     try {
       const requireVerification = emailConfigured();
       const owner = await createOwner(req, {
@@ -201,6 +208,8 @@ export function installAuth(app, prisma) {
         displayName: username,
         passwordHash: await hashPassword(password),
         status: requireVerification ? "PENDING_VERIFICATION" : "ACTIVE",
+        termsVersion: LEGAL_VERSION,
+        termsAcceptedAt: new Date(),
       });
       if (!requireVerification) return signIn(req, res, owner);
       await issueVerification(owner);
@@ -493,9 +502,107 @@ export function installAuth(app, prisma) {
       const valid = typeof password === "string" && await verifyPassword(password, req.owner.passwordHash);
       if (!valid) return res.status(401).json({ error: "Senha incorreta." });
     }
-    await prisma.owner.delete({ where: { id: req.owner.id } });
+    // Quase tudo some em cascata com o Owner (ver onDelete no schema). Seguir
+    // e bloquear, porém, também deixam o id desta conta nas linhas de OUTRAS
+    // pessoas (authorId, sem chave estrangeira) — apagadas aqui junto.
+    await prisma.$transaction([
+      prisma.communityFollow.deleteMany({ where: { authorId: req.owner.id } }),
+      prisma.communityBlock.deleteMany({ where: { authorId: req.owner.id } }),
+      prisma.owner.delete({ where: { id: req.owner.id } }),
+    ]);
     res.clearCookie("linkable_session", cookieOptions);
     res.sendStatus(204);
+  });
+  // "Baixar meus dados" (LGPD, art. 18, II e V — acesso e portabilidade):
+  // tudo o que o Linkable guarda sobre a conta logada, num JSON legível.
+  // Fica de fora só o que não é dado da pessoa ou não serve fora daqui: hash
+  // da senha, tokens de sessão/e-mail, e as imagens de favicon/pôster (são
+  // cópias das imagens dos próprios sites, e deixariam o arquivo enorme — a
+  // URL de cada favorito está incluída). Avatar e capa, enviados pela
+  // própria pessoa, vão junto.
+  app.get("/api/auth/me/export", async (req, res) => {
+    if (!req.owner) return res.status(401).json({ error: "Entre na sua conta para continuar." });
+    const ownerId = req.owner.id;
+    const bookmarkFields = { id: true, name: true, url: true, description: true, color: true, createdAt: true };
+    const [
+      owner, collections, comments, postLikes, postSaves, itemLikes, itemSaves, itemShares,
+      postShares, commentLikes, commentSaves, commentReports, postReports, follows, followers,
+      blocks, savedCollections, authEvents, sessions,
+    ] = await Promise.all([
+      prisma.owner.findUnique({ where: { id: ownerId } }),
+      prisma.collection.findMany({
+        where: { ownerId },
+        orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+        select: {
+          id: true, name: true, description: true, color: true, isPublic: true, publishedAt: true, createdAt: true,
+          bookmarks: { where: { groupId: null }, orderBy: [{ order: "asc" }, { createdAt: "asc" }], select: bookmarkFields },
+          groups: {
+            select: {
+              id: true, name: true, description: true, display: true, isPublic: true, parentId: true, createdAt: true,
+              bookmarks: { orderBy: [{ order: "asc" }, { createdAt: "asc" }], select: bookmarkFields },
+            },
+          },
+        },
+      }),
+      prisma.communityComment.findMany({ where: { ownerId }, orderBy: { createdAt: "asc" }, select: { id: true, postId: true, text: true, createdAt: true } }),
+      prisma.communityPostLike.findMany({ where: { ownerId }, select: { postId: true, createdAt: true } }),
+      prisma.communityPostSave.findMany({ where: { ownerId }, select: { postId: true, createdAt: true } }),
+      prisma.communityItemLike.findMany({ where: { ownerId }, select: { bookmarkId: true, createdAt: true } }),
+      prisma.communityItemSave.findMany({ where: { ownerId }, select: { bookmarkId: true, createdAt: true } }),
+      prisma.communityItemShare.findMany({ where: { ownerId }, select: { bookmarkId: true, createdAt: true } }),
+      prisma.communityPostShare.findMany({ where: { ownerId }, select: { postId: true, createdAt: true } }),
+      prisma.communityCommentLike.findMany({ where: { ownerId }, select: { commentId: true, createdAt: true } }),
+      prisma.communityCommentSave.findMany({ where: { ownerId }, select: { commentId: true, createdAt: true } }),
+      prisma.communityCommentReport.findMany({ where: { ownerId }, select: { commentId: true, createdAt: true } }),
+      prisma.communityPostReport.findMany({ where: { ownerId }, select: { postId: true, createdAt: true } }),
+      prisma.communityFollow.findMany({ where: { ownerId }, select: { authorId: true, createdAt: true } }),
+      prisma.communityFollow.count({ where: { authorId: ownerId } }),
+      prisma.communityBlock.findMany({ where: { ownerId }, select: { authorId: true, createdAt: true } }),
+      prisma.savedCollection.findMany({
+        where: { ownerId },
+        select: { collectionId: true, full: true, createdAt: true, items: { select: { bookmarkId: true, createdAt: true } } },
+      }),
+      prisma.authEvent.findMany({ where: { ownerId }, orderBy: { createdAt: "desc" }, select: { eventType: true, ip: true, userAgent: true, createdAt: true } }),
+      prisma.session.findMany({ where: { ownerId }, select: { expiresAt: true } }),
+    ]);
+    const data = {
+      exportedAt: new Date().toISOString(),
+      service: "Linkable",
+      account: {
+        id: owner.id,
+        username: owner.username,
+        displayName: owner.displayName,
+        email: owner.email,
+        createdAt: owner.createdAt,
+        status: owner.status,
+        hasPassword: Boolean(owner.passwordHash),
+        passwordChangedAt: owner.passwordChangedAt,
+        googleLinked: Boolean(owner.googleId),
+        termsVersion: owner.termsVersion,
+        termsAcceptedAt: owner.termsAcceptedAt,
+        avatar: owner.avatar || null,
+        banner: owner.banner || null,
+      },
+      collections,
+      community: {
+        comments,
+        likes: { posts: postLikes, items: itemLikes, comments: commentLikes },
+        saves: { posts: postSaves, items: itemSaves, comments: commentSaves, collections: savedCollections },
+        shares: { posts: postShares, items: itemShares },
+        reports: { posts: postReports, comments: commentReports },
+        following: follows,
+        followerCount: followers,
+        blocked: blocks,
+      },
+      security: {
+        activeSessions: sessions.length,
+        sessionExpirations: sessions.map((s) => s.expiresAt),
+        loginEvents: authEvents,
+      },
+    };
+    const date = new Date().toISOString().slice(0, 10);
+    res.set("Content-Disposition", `attachment; filename="linkable-meus-dados-${date}.json"`);
+    res.type("application/json").send(JSON.stringify(data, null, 2));
   });
   app.use("/api", (req, res, next) => {
     if (!req.owner) return res.status(401).json({ error: "Entre na sua conta para continuar." });

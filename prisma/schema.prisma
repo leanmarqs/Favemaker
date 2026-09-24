@@ -29,6 +29,11 @@ model Owner {
   failedLoginAttempts Int @default(0)
   lockedUntil DateTime?
   passwordChangedAt DateTime?
+  // Versão dos Termos de Uso/Política de Privacidade aceita no cadastro (ver
+  // LEGAL_VERSION em server/legal.mjs) e quando — prova do aceite exigida pela
+  // LGPD. null em contas criadas antes desse campo existir.
+  termsVersion String?
+  termsAcceptedAt DateTime?
   collections Collection[]
   sessions Session[]
   emailVerifications EmailVerification[]
@@ -76,13 +81,18 @@ model PasswordReset {
 model AuthEvent {
   id String @id @default(uuid())
   ownerId String?
-  owner Owner? @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  // Cascade (não SetNull): IP e navegador são dados pessoais — somem junto
+  // com a conta, em vez de ficarem órfãos no banco. Eventos sem conta (ex:
+  // tentativa de login num usuário inexistente) são apagados pela rotina de
+  // retenção (ver server/retention.mjs).
+  owner Owner? @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   eventType String
   ip String?
   userAgent String?
   createdAt DateTime @default(now())
   @@index([ownerId])
   @@index([eventType])
+  @@index([createdAt])
 }
 model Collection {
   id String @id @default(uuid())

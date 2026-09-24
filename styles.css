@@ -3288,6 +3288,89 @@ textarea {
 .group-dialog {
   width: 420px;
 }
+/* Termos de Uso / Política de Privacidade (ver LegalDocs.tsx): texto longo,
+   rolando dentro do próprio modal, com a mesma barra fina das páginas. */
+.legal-dialog {
+  width: 640px;
+}
+.legal-doc {
+  max-height: 65dvh;
+  overflow-y: auto;
+  padding-right: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: color-mix(in srgb, var(--text) 88%, var(--muted));
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 45%, transparent) transparent;
+}
+.legal-doc h3 {
+  margin: 20px 0 6px;
+  font-size: 14px;
+  color: var(--text);
+}
+.legal-doc p {
+  margin: 0 0 10px;
+}
+.legal-doc ul {
+  margin: 0 0 10px;
+  padding-left: 18px;
+}
+.legal-doc li {
+  margin-bottom: 6px;
+}
+.legal-doc .legal-version {
+  font-size: 11px;
+  color: var(--muted);
+}
+/* Seção "Privacidade e dados" da página Conta. */
+.legal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+.legal-actions .secondary {
+  border-radius: 999px;
+  cursor: pointer;
+  transition:
+    border-color 0.18s,
+    color 0.18s;
+}
+.legal-actions .secondary:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.legal-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+/* Aceite dos termos na tela de cadastro. */
+.auth-terms {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+}
+.auth-terms input {
+  margin-top: 2px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.auth-terms button {
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  font-size: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .group-dialog-fields {
   display: flex;
   flex-direction: column;

@@ -1,0 +1,54 @@
+# Blueprint do Render (render.com → New → Blueprint, apontando pra este repo).
+# Cria o serviço web (API + front-end já compilado, servido pelo mesmo
+# processo — ver o fim de server/index.mjs) e o Postgres, já ligados.
+#
+# Planos: "free" serve pra testar, mas o serviço web dorme após 15 min sem
+# acesso (a verificação de links em segundo plano para junto) e o Postgres
+# gratuito expira em 30 dias. Pra dados reais, troque os dois por planos pagos.
+services:
+  - type: web
+    name: linkable
+    runtime: node
+    plan: free
+    # Virgínia (EUA) é a região do Render mais próxima do Brasil.
+    region: virginia
+    # --include=dev: vite, typescript e prisma estão em devDependencies e o
+    # build precisa deles mesmo com NODE_ENV=production definido abaixo.
+    buildCommand: npm ci --include=dev && npx prisma generate && npm run build
+    # Migrações aplicadas a cada deploy, antes de subir o servidor. (Nos
+    # planos pagos dá pra mover isto pra "preDeployCommand".)
+    startCommand: npx prisma migrate deploy && npm start
+    healthCheckPath: /api/health
+    envVars:
+      # Obrigatório: sem isso o cookie de sessão sai sem a flag Secure.
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "24"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: linkable-db
+          property: connectionString
+      # Preencher no painel do Render (sync: false = pedido no primeiro deploy,
+      # nunca versionado aqui).
+      # URL pública do app, ex: https://linkable.onrender.com — usada nos
+      # links dos e-mails de verificação/redefinição de senha.
+      - key: APP_URL
+        sync: false
+      # Google Cloud Console → Credentials; incluir a URL acima em
+      # "Authorized JavaScript origins".
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      # resend.com — pra enviar a qualquer destinatário, o domínio do
+      # remetente precisa estar verificado no Resend.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+
+databases:
+  - name: linkable-db
+    plan: free
+    region: virginia
+    databaseName: linkable
+    user: linkable

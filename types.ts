@@ -8,6 +8,10 @@ export interface Account {
   banner: string;
   hasPassword: boolean;
   googleLinked: boolean;
+  // Versão/data do aceite dos Termos e da Política de Privacidade no
+  // cadastro — vazios em contas criadas antes desse aceite existir.
+  termsVersion?: string;
+  termsAcceptedAt?: string | null;
 }
 export interface Bookmark {
   id: string;

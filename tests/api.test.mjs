@@ -47,12 +47,20 @@ test(
       const username = `test_${Date.now()}`;
       const password = "test-password-12345";
       const email = `${username}@example.com`;
-      assert.equal((await a("/auth/register", "POST", { username, password })).status, 400);
-      assert.equal((await a("/auth/register", "POST", { username, password, email: "invalid" })).status, 400);
-      assert.equal((await a("/auth/register", "POST", { username, password, email: ` ${email.toUpperCase()} ` })).status, 200);
-      assert.equal((await b("/auth/register", "POST", { username: `${username}_b`, password, email })).status, 409);
-      assert.equal((await b("/auth/register", "POST", { username: `${username}_b`, password, email: `${username}_b@example.com` })).status, 200);
+      assert.equal((await a("/auth/register", "POST", { acceptTerms: true, username, password })).status, 400);
+      assert.equal((await a("/auth/register", "POST", { acceptTerms: true, username, password, email: "invalid" })).status, 400);
+      // Sem aceite dos Termos/Política (LGPD) o cadastro é recusado.
+      assert.equal((await a("/auth/register", "POST", { username, password, email })).status, 400);
+      assert.equal((await a("/auth/register", "POST", { acceptTerms: true, username, password, email: ` ${email.toUpperCase()} ` })).status, 200);
+      assert.equal((await b("/auth/register", "POST", { acceptTerms: true, username: `${username}_b`, password, email })).status, 409);
+      assert.equal((await b("/auth/register", "POST", { acceptTerms: true, username: `${username}_b`, password, email: `${username}_b@example.com` })).status, 200);
       const owner = (await a("/collections")).data.ownerId;
+      const exported = await a("/auth/me/export");
+      assert.equal(exported.status, 200);
+      assert.equal(exported.data.account.email, email);
+      assert.ok(exported.data.account.termsVersion);
+      assert.ok(exported.data.account.termsAcceptedAt);
+      assert.equal(exported.data.account.passwordHash, undefined);
       owners.push(owner);
       assert.equal((await db.owner.findUnique({ where: { id: owner } })).email, email);
       owners.push((await b("/collections")).data.ownerId);
@@ -124,7 +132,7 @@ test(
       owners.push(legacy.id);
       const legacyCollection = await db.collection.create({ data: { ...fields, ownerId: legacy.id } });
       const migrated = client(`linkable_session=${legacyToken}`);
-      assert.equal((await migrated("/auth/register", "POST", { username: `${username}_legacy`, password, email: `${username}_legacy@example.com` })).status, 200);
+      assert.equal((await migrated("/auth/register", "POST", { acceptTerms: true, username: `${username}_legacy`, password, email: `${username}_legacy@example.com` })).status, 200);
       assert.equal((await migrated("/collections")).data.collections[0].id, legacyCollection.id);
       assert.equal((await client(`linkable_session=${legacyToken}`)("/collections")).status, 401);
       await db.session.updateMany({ where: { ownerId: owner }, data: { expiresAt: new Date(0) } });
