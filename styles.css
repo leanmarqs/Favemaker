@@ -39,7 +39,9 @@
   display: grid;
   gap: 12px;
 }
-.auth-panel-inner input {
+/* Campos de texto do login/cadastro — o checkbox de aceite dos termos
+   (".auth-terms") fica de fora, senão vira uma caixa de 100% × 44px. */
+.auth-panel-inner input:where(:not([type="checkbox"])) {
   width: 100%;
   min-height: 44px;
   padding: 10px 14px;
@@ -3614,7 +3616,9 @@ textarea {
   cursor: pointer;
 }
 .auth-terms input {
-  margin-top: 2px;
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
   accent-color: var(--accent);
   flex-shrink: 0;
   cursor: pointer;
