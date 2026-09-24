@@ -564,7 +564,7 @@ export default function Auth() {
         </a>
       </nav>
       <aside className="auth-visual" aria-hidden="true">
-        <img src="/background-4.png" alt="" />
+        <img src="/background-5.png" alt="" />
       </aside>
     </main>
     <LegalDialog doc={legalDoc} onClose={() => setLegalDoc(null)} />
