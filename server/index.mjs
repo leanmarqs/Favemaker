@@ -11,6 +11,8 @@ import { metadata, normalizeUrl, resolveImage } from "./metadata.mjs";
 import { parseBookmarksHtml, buildBookmarksHtml } from "./bookmarksFile.mjs";
 import { scheduleLinkChecks } from "./linkCheck.mjs";
 import { scheduleRetention } from "./retention.mjs";
+import { buildInfo } from "./buildInfo.mjs";
+import { bugReportEmailConfigured, sendBugReportEmail } from "./email.mjs";
 import { bumpRelevance, creditRelevance, RELEVANCE_WEIGHT } from "./relevance.mjs";
 
 const prisma = new PrismaClient();
@@ -119,13 +121,14 @@ app.use("/api", (req, res, next) => {
 });
 // Health check do host (ver render.yaml): responde 200 só se o banco também
 // responde — um processo de pé mas sem conexão com o Postgres não serve pra
-// nada. Público e sem dados, antes de installAuth.
+// nada. Público e sem dados, antes de installAuth. Também diz qual commit
+// está no ar e desde quando (ver buildInfo.mjs).
 app.get("/api/health", async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
-    res.json({ ok: true });
+    res.json({ ok: true, ...buildInfo });
   } catch {
-    res.status(503).json({ ok: false });
+    res.status(503).json({ ok: false, ...buildInfo });
   }
 });
 // Página de perfil público (App.tsx, ?perfil=<id>), inspirada no Twitter:
@@ -982,6 +985,38 @@ app.post("/api/collections/:id/refresh-icons", async (req, res) => {
   } finally {
     iconRefreshRunning.delete(req.owner.id);
   }
+});
+// Relato de bug do menu Ajuda: guardado no banco (sempre) e, se
+// BUG_REPORT_EMAIL estiver configurado, também enviado por e-mail. O cliente
+// manda junto a página, o navegador, o tamanho da tela e o commit do front;
+// tudo é truncado aqui pra nunca guardar texto arbitrariamente grande. No
+// máximo 5 relatos por hora por conta.
+const bugReportLimits = new Map();
+const clip = (value, max) => (typeof value === "string" ? value.slice(0, max) : "");
+app.post("/api/bug-reports", async (req, res) => {
+  const message = typeof req.body.message === "string" ? req.body.message.trim() : "";
+  if (message.length < 10 || message.length > 4000)
+    return res.status(400).json({ error: "Descreva o problema em 10 a 4.000 caracteres." });
+  const now = Date.now();
+  const recent = (bugReportLimits.get(req.owner.id) || []).filter((t) => now - t < 3600000);
+  if (recent.length >= 5)
+    return res.status(429).json({ error: "Você já enviou vários relatos na última hora. Tente de novo mais tarde." });
+  bugReportLimits.set(req.owner.id, [...recent, now]);
+  const report = await prisma.bugReport.create({
+    data: {
+      ownerId: req.owner.id,
+      message,
+      pageUrl: clip(req.body.pageUrl, 2000),
+      userAgent: clip(req.headers["user-agent"], 512),
+      viewport: clip(req.body.viewport, 40),
+      appCommit: clip(req.body.appCommit, 40) || buildInfo.commit,
+    },
+  });
+  if (bugReportEmailConfigured())
+    sendBugReportEmail(report, req.owner).catch((error) =>
+      console.error("Falha ao enviar o relato de bug por e-mail:", error.message),
+    );
+  res.status(201).json({ id: report.id });
 });
 // Achata pastas aninhadas além de um nível: o Linkable só tem coleção → grupo →
 // favorito, então uma pasta dentro de um grupo perde só o próprio nome —

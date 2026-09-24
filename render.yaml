@@ -45,6 +45,10 @@ services:
         sync: false
       - key: EMAIL_FROM
         sync: false
+      # Opcional: e-mail que recebe os relatos de bug do menu Ajuda (eles
+      # ficam sempre salvos na tabela BugReport, com ou sem isto).
+      - key: BUG_REPORT_EMAIL
+        sync: false
 
 databases:
   - name: linkable-db

@@ -555,8 +555,16 @@ export default function Auth() {
           )}
         </div>
       </section>
+      <nav className="auth-legal-links">
+        <a href="/termos" target="_blank" rel="noopener">
+          {t("legal_terms")}
+        </a>
+        <a href="/privacidade" target="_blank" rel="noopener">
+          {t("legal_privacy")}
+        </a>
+      </nav>
       <aside className="auth-visual" aria-hidden="true">
-        <img src="/background-3.png" alt="" />
+        <img src="/background-4.png" alt="" />
       </aside>
     </main>
     <LegalDialog doc={legalDoc} onClose={() => setLegalDoc(null)} />

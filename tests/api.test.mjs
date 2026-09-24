@@ -61,6 +61,14 @@ test(
       assert.ok(exported.data.account.termsVersion);
       assert.ok(exported.data.account.termsAcceptedAt);
       assert.equal(exported.data.account.passwordHash, undefined);
+      // Relato de bug (menu Ajuda): texto curto demais é recusado; um válido
+      // é guardado e aparece em "Baixar meus dados".
+      assert.equal((await a("/bug-reports", "POST", { message: "curto" })).status, 400);
+      assert.equal(
+        (await a("/bug-reports", "POST", { message: "O botão de salvar não responde.", pageUrl: "http://localhost/", viewport: "1280x800" })).status,
+        201,
+      );
+      assert.equal((await a("/auth/me/export")).data.bugReports.length, 1);
       owners.push(owner);
       assert.equal((await db.owner.findUnique({ where: { id: owner } })).email, email);
       owners.push((await b("/collections")).data.ownerId);

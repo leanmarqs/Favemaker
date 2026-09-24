@@ -12,6 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  CircleHelp,
   CircleUser,
   Construction,
   Flag,
@@ -29,6 +30,7 @@ import {
   MoreVertical,
   Pencil,
   Plus,
+  Puzzle,
   RefreshCw,
   Search,
   SlidersHorizontal,
@@ -48,6 +50,10 @@ import { useIsSmallSource } from "./PosterRow";
 import CommunityFeed from "./Community";
 import CollectionDots from "./CollectionDots";
 import { LegalDialog, type LegalDocKind } from "./LegalDocs";
+import ExtensionDialog from "./ExtensionDialog";
+import HelpDialog from "./HelpDialog";
+import { CONTACT_EMAIL, hasContactEmail } from "./LegalDocs";
+import { APP_BUILD_DATE, APP_COMMIT, CREATOR } from "./siteInfo";
 import { useLanguage } from "./i18n";
 import { mockCollectionsByAuthor } from "./communityMock";
 import "./styles.css";
@@ -2365,6 +2371,8 @@ export default function App({
   const [nameDraft, setNameDraft] = useState("");
   const [usernameDraft, setUsernameDraft] = useState("");
   const [legalDoc, setLegalDoc] = useState<LegalDocKind | null>(null);
+  const [isExtensionOpen, setIsExtensionOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
@@ -3901,6 +3909,17 @@ export default function App({
                       role="menuitem"
                       onClick={() => {
                         setIsAccountMenuOpen(false);
+                        setIsExtensionOpen(true);
+                      }}
+                    >
+                      <Puzzle size={16} className="menu-icon-highlight" />
+                      {t("extension_menu")}
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setIsAccountMenuOpen(false);
                         setTheme(theme === "dark" ? "light" : "dark");
                       }}
                     >
@@ -3910,6 +3929,17 @@ export default function App({
                         <Moon size={16} />
                       )}
                       Tema
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setIsAccountMenuOpen(false);
+                        setIsHelpOpen(true);
+                      }}
+                    >
+                      <CircleHelp size={16} />
+                      {t("help_menu")}
                     </button>
                     {onLogout && (
                       <button
@@ -4271,6 +4301,15 @@ export default function App({
                   </button>
                 )}
               </div>
+              {/* Versão do código no ar (commit + data do build) — pra
+                  identificar exatamente o que a pessoa estava usando num
+                  relato de bug. Ver siteInfo.ts. */}
+              <p className="app-version">
+                {t("app_version", {
+                  commit: APP_COMMIT,
+                  date: new Date(APP_BUILD_DATE).toLocaleDateString(),
+                })}
+              </p>
             </div>
           </section>
         ) : (
@@ -4860,13 +4899,48 @@ export default function App({
         )}
       </main>
       <footer>
-        <img
-          className="footer-logotype"
-          src={theme === "dark" ? "/linkable-logotype-2.png" : "/linkable-logotype-1.png"}
-          alt="Linkable"
-        />
+        <div className="footer-brand">
+          <img
+            className="footer-logotype"
+            src={theme === "dark" ? "/linkable-logotype-2.png" : "/linkable-logotype-1.png"}
+            alt="Linkable"
+          />
+          <span>© {new Date().getFullYear()} Linkable</span>
+        </div>
+        <nav className="footer-links">
+          <a href="/termos" target="_blank" rel="noopener">
+            {t("legal_terms")}
+          </a>
+          <a href="/privacidade" target="_blank" rel="noopener">
+            {t("legal_privacy")}
+          </a>
+          {hasContactEmail && (
+            <a href={`mailto:${CONTACT_EMAIL}`}>{t("footer_contact")}</a>
+          )}
+          {CREATOR.name && (
+            <span className="footer-credit">
+              {t("footer_made_by")}{" "}
+              {CREATOR.url ? (
+                <a href={CREATOR.url} target="_blank" rel="noopener noreferrer">
+                  {CREATOR.name}
+                </a>
+              ) : (
+                CREATOR.name
+              )}
+            </span>
+          )}
+        </nav>
       </footer>
       <LegalDialog doc={legalDoc} onClose={() => setLegalDoc(null)} />
+      <ExtensionDialog
+        open={isExtensionOpen}
+        onClose={() => setIsExtensionOpen(false)}
+      />
+      <HelpDialog
+        open={isHelpOpen}
+        onClose={() => setIsHelpOpen(false)}
+        onOpenExtension={() => setIsExtensionOpen(true)}
+      />
       {notice && !kind && (
         <div className="toast" role="status">
           <span>{notice}</span>

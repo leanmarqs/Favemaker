@@ -55,6 +55,7 @@ model Owner {
   bookmarkSaveMarks BookmarkSaveMark[]
   userRelevance UserRelevance?
   savedCollections SavedCollection[]
+  bugReports BugReport[]
 }
 model Session {
   tokenHash String @id
@@ -440,4 +441,21 @@ model UserRelevance {
   owner Owner @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   score Int @default(0)
   updatedAt DateTime @updatedAt
+}
+// Relatos de bug enviados pelo menu Ajuda (ver POST /api/bug-reports em
+// server/index.mjs). Vão junto a versão do código no ar, a página e o
+// navegador, pra dar pra reproduzir. Somem com a conta (Cascade) e são
+// apagados depois de 1 ano pela rotina de retenção (server/retention.mjs).
+model BugReport {
+  id String @id @default(uuid())
+  ownerId String?
+  owner Owner? @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  message String @db.VarChar(4000)
+  pageUrl String @default("")
+  userAgent String @default("")
+  viewport String @default("")
+  appCommit String @default("")
+  createdAt DateTime @default(now())
+  @@index([ownerId])
+  @@index([createdAt])
 }

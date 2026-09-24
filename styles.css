@@ -2634,6 +2634,47 @@ footer {
   height: 22px;
   width: auto;
 }
+.footer-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+}
+.footer-links {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+}
+.footer-credit {
+  color: color-mix(in srgb, var(--muted) 80%, transparent);
+}
+.footer-credit a {
+  color: var(--muted);
+}
+.footer-credit a:hover {
+  color: var(--text);
+}
+/* Linha de versão no fim da página Conta — discreta de propósito. */
+.app-version {
+  margin: 24px 0 0;
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 0.3px;
+  color: color-mix(in srgb, var(--muted) 70%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 720px) {
+  footer {
+    flex-direction: column;
+    justify-content: center;
+    gap: 10px;
+    height: auto;
+    padding: 18px 0;
+  }
+  .footer-links {
+    justify-content: center;
+  }
+}
 footer p {
   font-size: 10px;
 }
@@ -3321,6 +3362,221 @@ textarea {
 .legal-doc .legal-version {
   font-size: 11px;
   color: var(--muted);
+}
+/* Páginas públicas /privacidade e /termos (ver LegalPage em LegalDocs.tsx). */
+.legal-page {
+  height: 100dvh;
+  overflow-y: auto;
+  background: var(--bg);
+  color: var(--text);
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 35%, transparent) transparent;
+}
+.legal-page-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 18px 20px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.legal-page-header img {
+  height: 22px;
+  width: auto;
+  display: block;
+}
+.legal-page-header nav {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+}
+.legal-page-header nav a {
+  color: var(--muted);
+}
+.legal-page-header nav a:hover,
+.legal-page-header nav a[aria-current="page"] {
+  color: var(--text);
+}
+.legal-page-main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 32px 20px 64px;
+}
+.legal-page-main h1 {
+  margin: 0 0 6px;
+  font-size: 28px;
+  letter-spacing: -0.5px;
+}
+.legal-page .legal-doc {
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
+  font-size: 14px;
+}
+.legal-page-back {
+  display: inline-block;
+  margin-top: 28px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+}
+.footer-links,
+.auth-legal-links {
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+}
+.footer-links a,
+.auth-legal-links a {
+  color: var(--muted);
+  transition: color 0.18s;
+}
+.footer-links a:hover,
+.auth-legal-links a:hover {
+  color: var(--text);
+}
+.auth-legal-links {
+  position: fixed;
+  left: 24px;
+  bottom: 16px;
+  z-index: 1;
+}
+/* Ícone em destaque no menu da conta (opção "Extensão"). */
+.menu-icon-highlight {
+  color: var(--accent);
+}
+/* Modal "Ajuda" (ver HelpDialog.tsx). */
+.help-dialog {
+  width: 480px;
+}
+.help-links {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 18px;
+}
+.help-links a,
+.help-links button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  transition: background 0.15s;
+}
+.help-links a:hover,
+.help-links button:hover {
+  background: var(--raised);
+}
+.help-links svg {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.help-bug {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+.help-bug h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+.help-bug h3 svg {
+  color: var(--accent);
+}
+.help-bug textarea {
+  margin-top: 0;
+  min-height: 110px;
+}
+.help-bug .primary {
+  width: 100%;
+  border-radius: 999px;
+}
+.help-bug-sent p {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--success);
+}
+.help-bug-sent .secondary {
+  border-radius: 999px;
+  cursor: pointer;
+}
+/* Modal "Extensão do Linkable" (ver ExtensionDialog.tsx). */
+.extension-dialog {
+  width: 460px;
+}
+.extension-intro {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.extension-intro img {
+  width: 52px;
+  height: 52px;
+  padding: 9px;
+  border-radius: 28%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+.extension-intro p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.extension-stores {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.extension-stores .primary,
+.extension-stores .secondary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 999px;
+  text-align: center;
+}
+.extension-stores .secondary {
+  color: var(--text);
+}
+.extension-stores a.secondary:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.extension-stores .is-soon {
+  opacity: 0.5;
+  cursor: default;
+}
+.extension-steps-title {
+  margin: 20px 0 8px;
+  font-size: 14px;
+}
+.extension-steps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: color-mix(in srgb, var(--text) 88%, var(--muted));
+}
+.extension-steps li {
+  margin-bottom: 7px;
 }
 /* Seção "Privacidade e dados" da página Conta. */
 .legal-actions {

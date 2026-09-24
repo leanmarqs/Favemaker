@@ -12,7 +12,10 @@ const VERSION_LABEL = "24 de setembro de 2026";
 // ou empresa, com CPF/CNPJ se quiser) e o e-mail que atende pedidos de
 // titulares (LGPD, art. 18) — precisa ser uma caixa lida de verdade.
 const CONTROLLER = "[NOME DO RESPONSÁVEL OU EMPRESA]";
-const CONTACT_EMAIL = "[privacidade@seudominio.com]";
+export const CONTACT_EMAIL = "[privacidade@seudominio.com]";
+// Enquanto CONTACT_EMAIL ainda for o marcador acima, o link "Contato" do
+// rodapé fica escondido.
+export const hasContactEmail = !CONTACT_EMAIL.startsWith("[");
 
 // Os prazos daqui precisam bater com o código: retenção de eventos de login
 // (server/retention.mjs), duração da sessão e dos links enviados por e-mail
@@ -62,6 +65,12 @@ export function PrivacyPolicy() {
           para manter você conectado) e, no armazenamento local, o idioma, o
           tema e quantas vezes você abriu cada favorito — isso fica só no seu
           dispositivo.
+        </li>
+        <li>
+          <strong>Relatos de bug:</strong> quando você usa "Reportar um bug"
+          (menu Ajuda), guardamos o texto que você escreveu junto com a
+          página em que estava, o navegador, o tamanho da tela e a versão do
+          Linkable, para conseguir reproduzir o problema.
         </li>
         <li>
           <strong>Extensão do navegador:</strong> quando você abre a extensão
@@ -161,6 +170,10 @@ export function PrivacyPolicy() {
         </li>
         <li>
           <strong>Sessões:</strong> 30 dias, ou até você sair.
+        </li>
+        <li>
+          <strong>Relatos de bug:</strong> 1 ano; depois são apagados
+          automaticamente.
         </li>
         <li>
           <strong>Links de confirmação de e-mail e de redefinição de
@@ -399,5 +412,69 @@ export function LegalDialog({
         </div>
       )}
     </dialog>
+  );
+}
+
+// Páginas públicas (sem login) com os mesmos textos — o link que vai nas
+// lojas de extensão, no rodapé do site e em qualquer lugar fora do app.
+// Escolhidas em index.tsx pelo caminho da URL, antes de carregar o app.
+const LEGAL_PATHS: Record<string, LegalDocKind> = {
+  "/privacidade": "privacy",
+  "/privacy": "privacy",
+  "/termos": "terms",
+  "/terms": "terms",
+};
+export function legalDocFromPath(pathname: string): LegalDocKind | null {
+  return LEGAL_PATHS[pathname.replace(/\/+$/, "").toLowerCase()] || null;
+}
+
+export function LegalPage({ doc }: { doc: LegalDocKind }) {
+  const { t } = useLanguage();
+  const title = doc === "terms" ? t("legal_terms") : t("legal_privacy");
+  useEffect(() => {
+    // Mesmo tema escolhido no app (guardado por App.tsx), já que esta página
+    // não passa pelo App que aplica o data-theme.
+    try {
+      const saved = localStorage.getItem("linkable-theme");
+      if (saved) document.documentElement.dataset.theme = saved;
+    } catch {
+      // Sem localStorage: fica o tema padrão.
+    }
+    document.title = `${title} — Linkable`;
+  }, [title]);
+  const theme =
+    typeof document !== "undefined" &&
+    document.documentElement.dataset.theme === "light"
+      ? "light"
+      : "dark";
+  return (
+    <div className="legal-page">
+      <header className="legal-page-header">
+        <a href="/" aria-label="Linkable">
+          <img
+            src={theme === "dark" ? "/linkable-logotype-2.png" : "/linkable-logotype-1.png"}
+            alt="Linkable"
+          />
+        </a>
+        <nav>
+          <a href="/termos" aria-current={doc === "terms" ? "page" : undefined}>
+            {t("legal_terms")}
+          </a>
+          <a
+            href="/privacidade"
+            aria-current={doc === "privacy" ? "page" : undefined}
+          >
+            {t("legal_privacy")}
+          </a>
+        </nav>
+      </header>
+      <main className="legal-page-main">
+        <h1>{title}</h1>
+        {doc === "terms" ? <TermsOfUse /> : <PrivacyPolicy />}
+        <a className="legal-page-back" href="/">
+          {t("legal_back_home")}
+        </a>
+      </main>
+    </div>
   );
 }

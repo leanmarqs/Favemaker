@@ -527,7 +527,7 @@ export function installAuth(app, prisma) {
     const [
       owner, collections, comments, postLikes, postSaves, itemLikes, itemSaves, itemShares,
       postShares, commentLikes, commentSaves, commentReports, postReports, follows, followers,
-      blocks, savedCollections, authEvents, sessions,
+      blocks, savedCollections, authEvents, sessions, bugReports,
     ] = await Promise.all([
       prisma.owner.findUnique({ where: { id: ownerId } }),
       prisma.collection.findMany({
@@ -564,6 +564,11 @@ export function installAuth(app, prisma) {
       }),
       prisma.authEvent.findMany({ where: { ownerId }, orderBy: { createdAt: "desc" }, select: { eventType: true, ip: true, userAgent: true, createdAt: true } }),
       prisma.session.findMany({ where: { ownerId }, select: { expiresAt: true } }),
+      prisma.bugReport.findMany({
+        where: { ownerId },
+        orderBy: { createdAt: "desc" },
+        select: { message: true, pageUrl: true, userAgent: true, viewport: true, appCommit: true, createdAt: true },
+      }),
     ]);
     const data = {
       exportedAt: new Date().toISOString(),
@@ -599,6 +604,7 @@ export function installAuth(app, prisma) {
         sessionExpirations: sessions.map((s) => s.expiresAt),
         loginEvents: authEvents,
       },
+      bugReports,
     };
     const date = new Date().toISOString().slice(0, 10);
     res.set("Content-Disposition", `attachment; filename="linkable-meus-dados-${date}.json"`);
