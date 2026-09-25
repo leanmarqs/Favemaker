@@ -81,11 +81,19 @@ app.use(
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", "data:"],
+        // Login com Google (Google Identity Services): o script, o CSS e as
+        // chamadas/iframes dele vêm de accounts.google.com/gsi — lista
+        // oficial em developers.google.com/identity/gsi/web/guides/get-google-api-clientid#content_security_policy.
+        scriptSrc: ["'self'", "https://accounts.google.com/gsi/client"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://accounts.google.com/gsi/style"],
+        // blob:: prévia e recorte da foto de capa (URL.createObjectURL do
+        // arquivo escolhido, ver cropBannerImage em App.tsx) — sem isso a
+        // imagem é bloqueada em produção e a capa não pode ser enviada. Só a
+        // própria página cria URLs blob:, então não abre nada pra fora.
+        imgSrc: ["'self'", "data:", "blob:"],
         fontSrc: ["'self'"],
-        connectSrc: ["'self'"],
+        connectSrc: ["'self'", "https://accounts.google.com/gsi/"],
+        frameSrc: ["https://accounts.google.com/gsi/"],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
         formAction: ["'self'"],
@@ -94,6 +102,9 @@ app.use(
     },
     frameguard: { action: "deny" },
     crossOriginResourcePolicy: { policy: "cross-origin" },
+    // O padrão do helmet ("same-origin") corta a comunicação entre a página
+    // e o popup de login do Google — "allow-popups" é o que o Google indica.
+    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
   }),
 );
 // 20mb (não 3mb): um export de favoritos do Firefox embute o favicon de cada
